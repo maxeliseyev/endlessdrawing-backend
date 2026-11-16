@@ -4,7 +4,7 @@ Backend общего бесконечного холста на **Rust + Axum + 
 
 Требования: [backend](docs/backend.md), [JSON-протокол v1](docs/protocol.md), [frontend](docs/frontend.md).
 
-Эксплуатация: [GitHub Actions → закрытый VPS-стенд](docs/deployment.md). Модерация: [Admin API](docs/admin-api.md), [закрытый provisioning / Touch ID](docs/admin-operations.md).
+Эксплуатация: [GitHub Actions → закрытый VPS-стенд](docs/deployment.md). Модерация: [Admin API](docs/admin-api.md), [закрытый provisioning / Touch ID](docs/admin-operations.md), [совместная интеграция frontend/backend](docs/admin-integration.md).
 
 ## Текущий этап
 
@@ -26,7 +26,7 @@ Backend общего бесконечного холста на **Rust + Axum + 
 
 Подготовлен ручной Actions workflow: проверка backend, checkout/build отдельного frontend, один Docker-образ, container smoke-test, SSH-доставка, локальный pre-deploy backup и health-checked активация/попытка image rollback. Стенд закрыт на loopback; серверный bootstrap выполнен, Docker CE и helper preflight проверены. По сообщению владельца приложение доступно через SSH-туннель; это не подтверждает shared persistence локального frontend-прототипа. Новая модерация на VPS не активирована.
 
-**Следующий этап:** frontend `/admin/` с enrollment/входом и выделением для скрытия, настоящая Touch ID/passkey проверка на закрытом HTTPS-стенде, review [замечаний зависимостей](docs/security-dependencies.md), ограничения по IP и внешние бэкапы. Текущий frontend ещё локальный прототип без WS: его выкладка не означает готовность shared world. До завершения этих этапов сервис не предназначен для публичного запуска. Отдельная HTTP-ручка выборки/изменения штрихов не реализуется: основной путь — WebSocket.
+Frontend `/admin/` реализован и прошёл совместный Chromium → HTTPS → backend/PostgreSQL тест с виртуальными UV passkeys; перед выкладкой это обязательный Actions gate. **Следующий этап:** настоящий Touch ID на доверенном закрытом HTTPS-стенде, public frontend realtime, review [замечаний зависимостей](docs/security-dependencies.md), ограничения по IP и внешние бэкапы. Текущий frontend ещё локальный прототип без WS: его выкладка не означает готовность shared world. До завершения этих этапов сервис не предназначен для публичного запуска. Отдельная HTTP-ручка выборки/изменения штрихов не реализуется: основной путь — WebSocket.
 
 Rust-пакет оставлен в корне отдельного backend-репозитория, без дополнительной папки `backend/`.
 
@@ -160,7 +160,7 @@ SQLx создаёт отдельную временную БД для каждо
 
 Проверяются валидация и bbox, строгий входной payload, секрет сессии, конфигурация без утечек, probes/статика, миграции и индексы, JSONB/box, выборка со страницами, soft delete и ограничения БД. Realtime-тесты проверяют два независимых клиента, reload/ownership, чужое удаление, повтор UUID/конфликт/tombstone, offscreen ack, byte-bounded chunks, смену подписки, snapshot при create/delete, overflow буфера, отсутствие событий при rollback, последовательность параллельных мутаций, Origin/hello/payload/connection/rate limits.
 
-Проверены 62 backend-теста, включая 15 admin-тестов: реальные ES256-подписи программных аутентификаторов, UV/RP/challenge/replay/expiry, синхронизируемые passkeys с нулевым counter, конкурентный verify, logout/recovery перед queued hide, атомарность аудита и COMMIT failure → resync/retry. Это не проверка настоящего Touch ID или браузерной интеграции. `cargo audit` пока сообщает транзитивные advisories: [оценка и ограничения](docs/security-dependencies.md).
+Проверены 63 стандартных backend-теста, включая 16 admin-тестов, плюс отдельный совместный browser integration test: реальные ES256-подписи программных аутентификаторов, UV/RP/challenge/replay/expiry, синхронизируемые passkeys с нулевым counter, конкурентный verify, logout/recovery перед queued hide, атомарность аудита и COMMIT failure → resync/retry. Это не проверка настоящего Touch ID или браузерной интеграции. `cargo audit` пока сообщает транзитивные advisories: [оценка и ограничения](docs/security-dependencies.md).
 
 CI выполняет тот же полный Rust-набор с PostgreSQL 17 и тесты deployment helper (mock Docker, не реальная БД). Deploy workflow дополнительно проверяет frontend check/unit/build и запускает собранный amd64-образ с одноразовым PostgreSQL через production Compose.
 

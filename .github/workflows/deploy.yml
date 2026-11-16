@@ -5,7 +5,7 @@ on:
   workflow_dispatch:
     inputs:
       frontend_ref:
-        description: 'Reviewed frontend commit SHA (or main for the latest committed prototype)'
+        description: 'Reviewed frontend commit SHA including the separate admin entry'
         type: string
         required: true
         default: main
@@ -24,7 +24,21 @@ jobs:
   build:
     needs: verify
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 40
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_DB: canvas
+          POSTGRES_USER: canvas
+          POSTGRES_PASSWORD: canvas_browser_ci_only
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U canvas -d canvas"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
     outputs:
       release: ${{ steps.metadata.outputs.release }}
     steps:
@@ -51,6 +65,19 @@ jobs:
           npm run check
           npm test
           npm run build
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+      - name: Install Chromium for real frontend/backend integration
+        working-directory: frontend-source
+        run: npx playwright install --with-deps chromium
+      - name: Verify real HTTPS admin integration before building the release
+        env:
+          FRONTEND_DIR: ${{ github.workspace }}/frontend-source
+          DATABASE_URL: postgres://canvas:canvas_browser_ci_only@127.0.0.1:5432/canvas
+        run: |
+          cargo clippy --locked --features browser-integration --test admin_browser -- -D warnings
+          cargo test --locked --features browser-integration --test admin_browser -- --ignored
       - name: Record immutable revisions
         id: metadata
         env:

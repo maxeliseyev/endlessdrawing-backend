@@ -76,6 +76,12 @@ def main():
                 assert response.code == 503
                 assert json.load(response)["error"]["code"] == "admin_unavailable"
                 assert response.headers["cache-control"] == "no-store"
+            with urllib.request.urlopen("http://127.0.0.1:8080/admin/", timeout=5) as response:
+                assert response.headers["cache-control"] == "no-store"
+                assert response.headers["x-frame-options"] == "DENY"
+                admin_asset = re.search(r'src="([^"]+\.js)"', response.read().decode()).group(1)
+            with urllib.request.urlopen("http://127.0.0.1:8080" + admin_asset, timeout=5) as response:
+                assert response.status == 200
             cli = subprocess.run(command + ["exec", "-T", "backend", "/app/canvas-admin", "create", "smoke-user"], env=env, capture_output=True, text=True)
             assert cli.returncode != 0 and "interactive trusted terminal" in cli.stderr
             backend = subprocess.check_output(command + ["ps", "-q", "backend"], env=env, text=True).strip()
@@ -93,7 +99,7 @@ def main():
             )
             assert backup.startswith(b"PGDMP")
             subprocess.run(command + ["exec", "-T", "postgres", "pg_restore", "--list"], env=env, input=backup, stdout=subprocess.DEVNULL, check=True)
-            print("Container smoke passed: frontend/assets, probes, non-root/read-only app, no published DB port, readable pg_dump archive")
+            print("Container smoke passed: public/admin builds, assets, probes, disabled admin, closed CLI, non-root/read-only app, no published DB port, readable pg_dump archive")
         finally:
             # Only the random project created above: never the persistent staging volume.
             subprocess.run(command + ["down", "--volumes", "--timeout", "20"], env=env, check=True)

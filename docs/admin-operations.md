@@ -1,10 +1,10 @@
 # Администратор: passkeys / Touch ID и закрытый provisioning
 
-Статус: backend проверен локальными HTTP/WebAuthn/PostgreSQL-тестами, но браузерный `/admin/`, настоящий Touch ID и production HTTPS ещё требуют совместной приёмки. Это инструкция для будущего включения, не сообщение об активации на VPS. Wire-контракт: [admin-api.md](admin-api.md).
+Статус: backend и браузерный `/admin/` прошли [совместную HTTPS/API/WS/DB проверку](admin-integration.md) с виртуальными Chromium UV аутентификаторами. Настоящий Touch ID и production HTTPS ещё требуют приёмки. Это инструкция для будущего включения, не сообщение об активации на VPS. Wire-контракт: [admin-api.md](admin-api.md).
 
 ## До включения
 
-1. Собрать отдельный frontend entry `/admin/` с enrollment, входом, выбором штрихов и подтверждением скрытия. На публичном холсте никаких admin imports/ссылок/shortcut.
+1. В релиз включить целый новый frontend dist с отдельным `/admin/` entry (реализован в frontend `623c5a6`): enrollment, вход, выбор штрихов и подтверждение скрытия. На публичном холсте никаких admin imports/ссылок/shortcut.
 2. Настроить доверенный браузером HTTPS/WSS на окончательном origin, сохранив закрытый доступ к стенду. Обычного HTTP SSH-туннеля `http://localhost:8080` для этого сценария недостаточно: Secure cookies и политика admin требуют HTTPS. Не ослаблять MFA/Origin/cookie ради стенда.
 3. В серверном `/etc/endlessdrawing/runtime.env` настроить только несекретные параметры:
    ```dotenv
@@ -15,7 +15,7 @@
    ```
    Origin — без завершающего `/`, пути, query или fragment. Отдельные localhost/staging RP требуют отдельных регистраций; они не переносятся автоматически на production RP.
 4. Установить актуальный root-owned `deploy/compose.yml` штатным bootstrap: старый файл с VPS не передаёт новые ADMIN_* автоматически при одном image deploy. Не перезаписывать существующие DB credentials. Перевыкладку делать через ручной Actions с backup/readiness, не прямой сборкой на VPS.
-5. Проверить [замечания аудита зависимостей](security-dependencies.md). Admin по умолчанию выключен; CA-файла/сертификата аутентификатора больше не требуется. Не помещать пароль, enrollment token или приватные ключи в env/VITE/Actions/URL.
+5. Проверить [замечания аудита зависимостей](security-dependencies.md). Admin API по умолчанию выключен; HTML entry доступен для проверки и показывает отключённое администрирование. Это не даёт сессии или enrollment. CA-файла/сертификата аутентификатора больше не требуется. Не помещать пароль, enrollment token или приватные ключи в env/VITE/Actions/URL.
 
 ## Создание аккаунта
 

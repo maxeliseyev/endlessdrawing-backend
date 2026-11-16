@@ -6,7 +6,7 @@ Workflow подготовлен; первая попытка Actions остан�
 
 VPS: `subwhale@212.147.244.161`, Linux amd64, Ubuntu 26.04.1, 2 vCPU, 8 ГБ RAM, диск 40 ГБ (на момент проверки свободно около 35 ГБ). Для начального закрытого стенда достаточно; диск и размер БД/бэкапов контролировать.
 
-Frontend: `https://github.com/maxeliseyev/endlessdrawing-frontend`, локально `../endless-drawing-frontend`. **Сейчас это локальный прототип без WS и admin UI**: сборка/выкладка не делает его общим сохраняемым холстом. Интеграция с backend и модерация — отдельные обязательные этапы.
+Frontend: `https://github.com/maxeliseyev/endlessdrawing-frontend`, локально `../endless-drawing-frontend`. **Публичный холст пока локальный прототип; отдельный admin UI и его read-only WS реализованы**. Совместный HTTPS/WebAuthn/API/WS/DB тест с виртуальными UV authenticators прошёл; настоящие Touch ID и production HTTPS ещё не приняты. Сборка/выкладка не делает публичный drawing UI общим сохраняемым холстом. Интеграция с backend и модерация — отдельные обязательные этапы.
 
 Начальный стенд намеренно закрыт: приложение слушает только `127.0.0.1:8080` на VPS, PostgreSQL вообще без published ports. Публичный proxy/80/443 пока не настраивается. Backend подключён к bridge `edge` для loopback-publishing и к внутренней `private` для БД; PostgreSQL подключён только к `private`. Требования до публичного запуска — [модерация](moderation.md), TLS и внешние проверенные бэкапы.
 
@@ -16,7 +16,7 @@ Workflow `.github/workflows/deploy.yml` в backend-репозитории, Actio
 
 1. Переиспользовать Backend CI: shell deployment tests, Rust fmt/clippy, все PostgreSQL/WS-тесты.
 2. Checkout backend выбранного запуска и отдельного frontend на `frontend_ref`; предпочтительно проверенный commit SHA, `main` допустим для прототипа.
-3. Node 22: `npm ci`, check, unit tests и build. Browser E2E здесь не запускаются.
+3. Node 22: `npm ci`, check, unit tests и build. Затем PostgreSQL 17 + Playwright Chromium: реальный HTTPS frontend/backend enrollment/login/hide/logout тест до сборки/SSH. Полный frontend mock suite Firefox/WebKit отдельно, не вместо совместного gate.
 4. Зафиксировать оба SHA в `release.json`, выбрать тег `endlessdrawing-app:<backend_sha>-<run_id>-<run_attempt>`, не изменяемый `latest`.
 5. Собрать **один linux/amd64 Docker-образ** с revision labels: Rust binary + frontend `dist/`. Rust компилируется на Actions runner, не на VPS.
 6. Загрузить образ на runner и проверить с одноразовой PostgreSQL через production Compose: HTML/assets, probes, non-root/read-only и отсутствие опубликованного DB-порта. Это smoke-test, не браузерная E2E-интеграция общего мира.
@@ -177,10 +177,10 @@ Pre-deploy dump создаётся до запуска миграций. `pg_res
 
 - actionlint для обоих workflows, синтаксис Bash и Compose config;
 - 11 тестов activation state machine в Linux-контейнере с mock Docker, включая host lock, failed backup, мало места, failed readiness и image rollback;
-- 62 backend-теста с PostgreSQL, включая 15 admin-тестов; frontend TypeScript, 41 unit-тест и build были проверены на предыдущем этапе, в этой backend-проверке повторно не запускались;
+- 63 стандартных backend-теста с PostgreSQL (16 admin) и отдельная реальная Chromium HTTPS frontend/API/WS/DB интеграция; frontend TypeScript, 97 unit-тестов и production build; полный повторный browser suite — 127 passed / 2 CDP-only skip ([детали](admin-integration.md));
 - фактическая сборка native ARM64 Docker-образа с provisioning CLI и smoke-test с одноразовым PostgreSQL: статика/assets, probes, non-root/read-only, admin-disabled default, отказ CLI без TTY, отсутствие published DB-порта, `pg_dump` и читаемость архива.
 
-Bootstrap на VPS и серверный preflight проверены после восстановления Docker CE; доступ через SSH-туннель затем подтверждён владельцем. Новая модерация на VPS не включалась, полноценное восстановление backup и browser E2E общего мира/модерации пока не подтверждены. Последние функции frontend/admin ещё не реализованы. AMD64 container smoke-test включён в workflow как gate до SSH.
+Bootstrap на VPS и серверный preflight проверены после восстановления Docker CE; доступ через SSH-туннель затем подтверждён владельцем. Новая модерация на VPS не включалась, полноценное восстановление backup и browser E2E общего мира/модерации пока не подтверждены. Frontend admin реализован; production HTTPS/Touch ID/provisioning ещё не приняты. AMD64 container smoke-test включён в workflow как gate до SSH.
 
 Для повторения локального container smoke-test (не деплой):
 

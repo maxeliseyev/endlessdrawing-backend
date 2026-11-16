@@ -21,4 +21,4 @@ cargo tree --locked --target x86_64-unknown-linux-gnu -e normal,build -i rsa@0.9
 cargo tree --locked --target x86_64-unknown-linux-gnu -e normal,build -i rsa@0.10.0-rc.19
 ```
 
-Не выдавать 62 успешных backend-теста или container smoke за успешный dependency audit, browser Touch ID E2E либо разрешение публичного запуска.
+Не выдавать 63 успешных backend-теста, виртуальную browser integration или container smoke за успешный dependency audit, настоящий Touch ID E2E либо разрешение публичного запуска.

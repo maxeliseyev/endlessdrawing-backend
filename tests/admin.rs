@@ -1402,6 +1402,47 @@ async fn admin_http_guards_reject_login_logout_csrf_cross_site_and_oversized_pay
 }
 
 #[tokio::test]
+async fn disabled_admin_entry_can_explain_configuration_without_granting_api_access() {
+    let directory = tempfile::tempdir().unwrap();
+    tokio::fs::create_dir(directory.path().join("admin"))
+        .await
+        .unwrap();
+    tokio::fs::write(
+        directory.path().join("admin/index.html"),
+        "<!doctype html><title>Administration</title>",
+    )
+    .await
+    .unwrap();
+    let routes = admin::router(None, Some(directory.path().to_owned()));
+    let response = routes
+        .clone()
+        .oneshot(Request::get("/admin/").body(Body::empty()).unwrap())
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(response.headers()["cache-control"], "no-store");
+    assert_eq!(response.headers()["x-frame-options"], "DENY");
+    for path in [
+        "/api/admin/session",
+        "/api/admin/login/options",
+        "/api/admin/enrollment/start",
+        "/api/admin/strokes/hide",
+    ] {
+        let response = routes
+            .clone()
+            .oneshot(Request::post(path).body(Body::from("{}")).unwrap())
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
+        let bytes = response.into_body().collect().await.unwrap().to_bytes();
+        assert_eq!(
+            serde_json::from_slice::<Value>(&bytes).unwrap()["error"]["code"],
+            "admin_unavailable"
+        );
+    }
+}
+
+#[tokio::test]
 async fn disabled_admin_routes_return_safe_uncached_errors() {
     let response = admin::router(None, None)
         .oneshot(

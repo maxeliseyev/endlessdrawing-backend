@@ -78,6 +78,9 @@ fn exact_origin(headers: &HeaderMap, expected: &str) -> bool {
 async fn guard(State(state): State<Routes>, mut request: Request, next: Next) -> Response {
     let is_api = request.uri().path().starts_with("/api/admin/");
     let allowed = match &state.service {
+        // The entry contains no secrets and may explain disabled administration.
+        // API access still fails closed, including all enrollment/login/session routes.
+        None if !is_api => Ok(()),
         None => Err(AdminError::Disabled),
         Some(service) => {
             let changing = !matches!(*request.method(), Method::GET | Method::HEAD);

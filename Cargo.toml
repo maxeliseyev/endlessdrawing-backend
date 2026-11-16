@@ -6,6 +6,9 @@ description = "Single-process backend for a shared infinite drawing canvas"
 publish = false
 default-run = "endless-drawing-server"
 
+[features]
+browser-integration = []
+
 [dependencies]
 anyhow = "1"
 argon2 = "0.5"
@@ -31,6 +34,7 @@ webauthn-rs = { version = "=0.6.2", default-features = false, features = ["dange
 zeroize = "1"
 
 [dev-dependencies]
+tokio = { version = "1", features = ["process", "io-util"] }
 crypto-glue = "0.2.2"
 serde_cbor_2 = "0.13"
 webauthn-authenticator-rs = { version = "=0.6.2", features = ["softpasskey"] }
