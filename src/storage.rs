@@ -92,6 +92,7 @@ impl TryFrom<StrokeRow> for StoredStroke {
 pub(crate) enum StorageError {
     Rejected(ErrorCode),
     Database(sqlx::Error),
+    CommitUnknown(sqlx::Error),
 }
 
 impl From<sqlx::Error> for StorageError {

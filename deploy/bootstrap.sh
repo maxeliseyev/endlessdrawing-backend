@@ -11,13 +11,34 @@ install -d -m 0750 "$app_dir"
 exec 9>"$app_dir/deploy.lock"
 flock -n 9 || { printf '%s\n' 'Deployment is running; retry later' >&2; exit 1; }
 
-# Use Ubuntu packages, not a remote curl | sh installer. Does not alter SSH/firewall.
+# Do not mix Ubuntu docker.io/compose-v2 with Docker CE/containerd.io/compose-plugin.
+# Refuse a half-configured package database instead of making the damage worse.
+audit=$(dpkg --audit)
+if [[ -n $audit ]]; then
+    printf '%s\n' "$audit" 'Package setup is incomplete. Repair one consistent Docker installation before rerunning bootstrap.' >&2
+    exit 1
+fi
 export DEBIAN_FRONTEND=noninteractive
+if command -v docker >/dev/null; then
+    docker compose version >/dev/null || {
+        printf '%s\n' 'Docker exists but Compose is unavailable. Install the Compose plugin from the SAME Docker provider; bootstrap will not replace Docker.' >&2
+        exit 1
+    }
+    printf '%s\n' 'Existing Docker + Compose preserved (no Docker package replacement)'
+else
+    if dpkg-query -W -f='${db:Status-Status}' docker-compose-plugin 2>/dev/null | grep -qx installed; then
+        printf '%s\n' 'Docker CE Compose plugin exists without a working Docker CLI. Repair Docker CE before bootstrap.' >&2
+        exit 1
+    fi
+    apt-get update
+    apt-get install -y --no-install-recommends docker.io docker-compose-v2
+fi
 apt-get update
-apt-get install -y --no-install-recommends docker.io docker-compose-v2 openssl ca-certificates curl util-linux
+apt-get install -y --no-install-recommends openssl ca-certificates curl util-linux
 systemctl enable --now docker
 
 docker compose version
+docker info >/dev/null
 install -d -m 0700 "$config_dir" "$app_dir/backups"
 install -o root -g root -m 0644 "$source_dir/compose.yml" "$app_dir/compose.yml"
 install -o root -g root -m 0755 "$source_dir/activate.sh" /usr/local/sbin/endlessdrawing-activate

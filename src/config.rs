@@ -5,6 +5,7 @@ use std::{env, net::SocketAddr, path::PathBuf, str::FromStr, time::Duration};
 use sqlx::postgres::PgConnectOptions;
 use thiserror::Error;
 
+use crate::admin::AdminConfig;
 use crate::domain::{StrokeLimits, WORLD_LIMIT};
 pub use crate::realtime_settings::RealtimeSettings;
 
@@ -26,6 +27,8 @@ pub struct Config {
     pub stroke_limits: StrokeLimits,
     /// WebSocket protocol, resource limits and allowed browser origins.
     pub realtime: RealtimeSettings,
+    /// Disabled unless explicitly configured with HTTPS RP/origin for UV-required passkeys.
+    pub admin: Option<AdminConfig>,
 }
 
 /// A safe configuration error that contains a key, never its secret value.
@@ -67,6 +70,23 @@ impl Config {
             .filter(|value| !value.trim().is_empty())
             .map(PathBuf::from);
 
+        let admin = if setting::<bool>(&lookup, "ADMIN_ENABLED", "false")? {
+            let required = |key| {
+                lookup(key)
+                    .filter(|value| !value.is_empty())
+                    .ok_or(ConfigError { key })
+            };
+            Some(
+                AdminConfig::new(&required("ADMIN_ORIGIN")?, required("ADMIN_RP_ID")?).map_err(
+                    |_| ConfigError {
+                        key: "ADMIN_CONFIG",
+                    },
+                )?,
+            )
+        } else {
+            None
+        };
+
         Ok(Self {
             bind_addr,
             database,
@@ -76,6 +96,7 @@ impl Config {
             static_dir,
             stroke_limits,
             realtime: RealtimeSettings::from_lookup(&lookup)?,
+            admin,
         })
     }
 }
@@ -339,6 +360,33 @@ mod tests {
         ] {
             assert_eq!(config_with(&[(key, value)]).err().unwrap().key, key);
         }
+    }
+
+    #[test]
+    fn passkey_admin_is_disabled_by_default_and_needs_only_https_rp_configuration() {
+        assert!(config_with(&[]).unwrap().admin.is_none());
+        let settings = [
+            ("ADMIN_ENABLED", "true"),
+            ("ADMIN_ORIGIN", "https://canvas.example.test"),
+            ("ADMIN_RP_ID", "example.test"),
+        ];
+        let config = config_with(&settings).unwrap().admin.unwrap();
+        assert_eq!(config.origin.as_str(), "https://canvas.example.test/");
+        assert_eq!(config.rp_id, "example.test");
+        // No CA file, authenticator certificate or device-specific secret is required.
+        for (key, value) in [
+            ("ADMIN_ORIGIN", "http://canvas.example.test"),
+            ("ADMIN_ORIGIN", "https://canvas.example.test/path"),
+            ("ADMIN_RP_ID", "unrelated.test"),
+        ] {
+            let mut invalid = settings.to_vec();
+            invalid.iter_mut().find(|(name, _)| *name == key).unwrap().1 = value;
+            assert_eq!(config_with(&invalid).err().unwrap().key, "ADMIN_CONFIG");
+        }
+        assert_eq!(
+            config_with(&[("ADMIN_ENABLED", "true")]).err().unwrap().key,
+            "ADMIN_ORIGIN"
+        );
     }
 
     #[test]

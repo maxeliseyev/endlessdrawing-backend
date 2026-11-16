@@ -8,6 +8,6 @@ target=${1:-subwhale@212.147.244.161}
 [[ -f $identity ]] || { printf '%s\n' 'Set SSH_IDENTITY to the private key path' >&2; exit 1; }
 printf '%s\n' 'This installs Docker/Compose and root-owned deployment files on the VPS.'
 printf '%s\n' 'It does not start the app, open ports, change SSH or publish the site.'
-tar -C "$source_dir" -czf - bootstrap.sh activate.sh compose.yml | \
+COPYFILE_DISABLE=1 tar --no-xattrs -C "$source_dir" -czf - bootstrap.sh activate.sh compose.yml | \
     ssh -i "$identity" -o BatchMode=yes -o StrictHostKeyChecking=yes -o ConnectTimeout=10 "$target" \
     'set -eu; temporary=$(mktemp -d); trap '\''rm -rf -- "$temporary"'\'' EXIT; tar -xz -C "$temporary"; sudo -n bash "$temporary/bootstrap.sh"'

@@ -1,5 +1,11 @@
 use anyhow::{Context, Result};
-use endless_drawing_server::{app, config::Config, db, realtime::Realtime};
+use endless_drawing_server::{
+    admin::{self, AdminService},
+    app,
+    config::Config,
+    db,
+    realtime::Realtime,
+};
 use std::time::Duration;
 use tracing_subscriber::EnvFilter;
 
@@ -46,19 +52,33 @@ async fn run(config: Config) -> Result<()> {
         Realtime::start(pool.clone(), config.stroke_limits, config.realtime)?;
     let shutdown = realtime.shutdown_token();
     let signal_shutdown = shutdown.clone();
+    let administrator = match config.admin {
+        Some(settings) => Some(
+            AdminService::new(pool.clone(), &realtime, settings)
+                .await
+                .context(
+                    "could not initialize administration; check passkey RP/origin configuration",
+                )?,
+        ),
+        None => None,
+    };
     let application = app::router(
         pool.clone(),
         config.database_query_timeout,
-        config.static_dir,
+        config.static_dir.clone(),
     )
-    .merge(realtime.router());
+    .merge(realtime.router())
+    .merge(admin::router(administrator, config.static_dir));
     tracing::info!(address = %listener.local_addr()?, "backend ready");
-    let result = axum::serve(listener, application)
-        .with_graceful_shutdown(async move {
-            shutdown_signal().await;
-            signal_shutdown.cancel();
-        })
-        .await;
+    let result = axum::serve(
+        listener,
+        application.into_make_service_with_connect_info::<std::net::SocketAddr>(),
+    )
+    .with_graceful_shutdown(async move {
+        shutdown_signal().await;
+        signal_shutdown.cancel();
+    })
+    .await;
     shutdown.cancel();
     match tokio::time::timeout(Duration::from_secs(30), &mut writer).await {
         Ok(result) => result.context("mutation worker failed")?,

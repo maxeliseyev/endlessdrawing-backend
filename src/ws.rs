@@ -167,7 +167,13 @@ async fn subscription_item(subscription: &mut Option<Subscription>) -> Subscript
         .events
         .recv()
         .await
-        .map(SubscriptionItem::Event)
+        .map(|event| {
+            if matches!(event.as_ref(), Event::Reset) {
+                SubscriptionItem::Resync
+            } else {
+                SubscriptionItem::Event(event)
+            }
+        })
         .unwrap_or(SubscriptionItem::Resync)
 }
 
@@ -231,10 +237,11 @@ async fn connection(mut socket: WebSocket, service: Realtime, _permit: OwnedSema
                     }
                     SubscriptionItem::Event(event) => {
                         subscription.as_ref().and_then(|current| {
-                            if !intersects(current.bounds, event.bounds()) { return None; }
+                            if !intersects(current.bounds, event.bounds()?) { return None; }
                             Some(match event.as_ref() {
                                 Event::Created(stroke) => ServerMessage::Created { subscription_id: current.id.clone(), stroke: stroke.public(&owner) },
                                 Event::Deleted { id, seq, .. } => ServerMessage::Deleted { subscription_id: current.id.clone(), stroke_id: *id, seq: *seq },
+                                Event::Reset => return None,
                             })
                         })
                     }
@@ -444,6 +451,28 @@ mod tests {
                 bounds,
             }));
         }
+        assert!(matches!(
+            subscription_item(&mut subscription).await,
+            SubscriptionItem::Resync
+        ));
+    }
+
+    #[tokio::test]
+    async fn uncertain_commit_invalidates_live_subscriptions() {
+        let (sender, receiver) = broadcast::channel(4);
+        let bounds = Bounds {
+            min_x: 0.0,
+            min_y: 0.0,
+            max_x: 10.0,
+            max_y: 10.0,
+        };
+        let mut subscription = Some(Subscription {
+            id: "v1".into(),
+            bounds,
+            events: receiver,
+            snapshot: None,
+        });
+        sender.send(Arc::new(Event::Reset)).ok().unwrap();
         assert!(matches!(
             subscription_item(&mut subscription).await,
             SubscriptionItem::Resync

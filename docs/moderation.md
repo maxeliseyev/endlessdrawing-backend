@@ -2,9 +2,9 @@
 
 ## Статус
 
-Основание — документ владельца в соседнем frontend-репозитории: `../endless-drawing-frontend/docs/moderation.md` (из этого `docs/` — `../../endless-drawing-frontend/docs/moderation.md`). Frontend-документ не изменяется этой задачей.
+Основание — документ владельца в соседнем frontend-репозитории: `../endless-drawing-frontend/docs/moderation.md` (из этого `docs/` — `../../endless-drawing-frontend/docs/moderation.md`). Продуктовые требования и handoff синхронизируются с frontend-сессией; wire-формы определяются только в [Admin API](admin-api.md).
 
-**Ничего из административного API ниже пока не реализовано.** Это план следующего этапа, не объявление готовой защиты. Публичный запуск до его приёмки запрещён; CI/CD пока выкладывает только закрытый SSH-стенд.
+**Backend API реализуется и тестируется локально; готовой публичной админки пока нет.** Актуальные wire-формы и статус проверок — в [Admin API](admin-api.md). Владелец выбрал обычные passkeys через Touch ID: аппаратная аттестация и CA trust store не требуются, platform/synced credentials разрешены, UV required и пароль остаются обязательными. Публичный запуск до его приёмки запрещён; CI/CD пока выкладывает только закрытый SSH-стенд.
 
 Исходный MVP допускал служебный секрет/команду, но требование владельца уточнено: нужен браузерный `/admin/`, **логин + сложный пароль + обязательный WebAuthn/FIDO2**, основной и запасной ключ. Однофакторный временный вход, shared secret в JS, `?admin=1`, WS `admin:true` и password-only fallback не делать.
 
@@ -46,7 +46,7 @@
 - Challenge криптографически случайный, одноразовый, с account/purpose/origin binding. После успешной проверки атомарно пометить consumed; конкурентный replay не создаёт второй сеанс.
 - Проверять ожидаемые RP ID/origin, подпись, challenge, user presence, `userVerification: required` и применимые flags/counters.
 - Пароль выдаёт только pending-MFA состояние, **не** `admin_sessions`. Отмена/ошибка/timeout WebAuthn не имеют password-only обхода.
-- Основной и запасной физический ключ регистрируются отдельно. Разрешение синхронизируемых/platform passkeys — решение владельца. Нельзя надёжно обещать hardware-only по одному UI-параметру `authenticatorAttachment`; для строгого ограничения нужна отдельная проверенная attestation policy.
+- Основной и резервный passkeys регистрируются отдельно. По решению владельца разрешены Touch ID/platform и синхронизируемые passkeys; hardware-only attestation policy не используется. Один iCloud credential на Mac/iPhone не считать двумя независимыми регистрациями. Сервер проверяет UV и подпись, не получает биометрию и не требует исключительно отпечаток.
 
 ### Предлагаемые сроки и ограничения — согласовать
 
@@ -149,4 +149,4 @@ SSH private key не загружается в браузер. Ключ CI-де�
 - Runtime credentials, password, cookies и assertions не попадают в artifacts/JS/логи/GitHub secrets frontend; публичные события не содержат причин и аудитора.
 - Владелец утвердил политику authenticator/passkey, сроки сеансов/challenges, юрисдикцию и retention геометрии/tombstones/аудита/внешних backup. Soft delete не равен физическому удалению запрещённого материала.
 
-Перед реализацией нужно подтвердить наличие двух UV-capable FIDO2 ключей, policy platform/synced passkeys и итоговый production origin. Параметры выше являются предложением, а не ослаблением обязательного MFA.
+Перед публичным включением нужно проверить настоящие Touch ID/passkeys, отдельный резервный доступ и итоговый HTTPS production origin. Допуск platform/synced passkeys уже выбран владельцем; пароль, UV и одноразовые challenges не ослабляются.

@@ -5,13 +5,15 @@ COPY Cargo.toml Cargo.lock build.rs ./
 COPY migrations ./migrations
 COPY src ./src
 RUN cargo build --locked --release && \
-    install -D target/release/endless-drawing-server /out/endless-drawing-server
+    install -D target/release/endless-drawing-server /out/endless-drawing-server && \
+    install -D target/release/canvas-admin /out/canvas-admin
 
 FROM debian:bookworm-slim AS runtime
 RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates curl \
     && rm -rf /var/lib/apt/lists/*
 WORKDIR /app
 COPY --from=builder /out/endless-drawing-server /app/endless-drawing-server
+COPY --from=builder /out/canvas-admin /app/canvas-admin
 # CI checks out the separate frontend repository and builds dist before docker build.
 COPY frontend-source/dist/ /app/static/
 ENV BIND_ADDR=0.0.0.0:3000 STATIC_DIR=/app/static RUST_LOG=info

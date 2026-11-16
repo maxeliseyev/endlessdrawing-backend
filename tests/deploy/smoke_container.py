@@ -14,6 +14,7 @@ import subprocess
 import tempfile
 import time
 import urllib.request
+import urllib.error
 import uuid
 
 
@@ -44,9 +45,10 @@ def main():
         env_file.chmod(0o600)
         env = dict(os.environ)
         # Do not let a developer/CI DATABASE_URL override the disposable test credentials.
-        for key in ("POSTGRES_DB", "POSTGRES_USER", "POSTGRES_PASSWORD", "DATABASE_URL", "ALLOWED_ORIGINS", "RUST_LOG"):
+        for key in ("POSTGRES_DB", "POSTGRES_USER", "POSTGRES_PASSWORD", "DATABASE_URL", "ALLOWED_ORIGINS", "RUST_LOG", "ADMIN_ENABLED", "ADMIN_ORIGIN", "ADMIN_RP_ID"):
             env.pop(key, None)
         env["ENDLESSDRAWING_IMAGE"] = args.image
+        env["ADMIN_ENABLED"] = "false"
         command = ["docker", "compose", "-p", project, "--env-file", str(env_file), "-f", str(ROOT / "deploy" / "compose.yml")]
         try:
             subprocess.run(command + ["up", "-d", "--wait", "--wait-timeout", "120"], env=env, check=True)
@@ -67,6 +69,15 @@ def main():
                 asset = re.search(r'src="([^"]+\.js)"', html).group(1)
             with urllib.request.urlopen("http://127.0.0.1:8080" + asset, timeout=5) as response:
                 assert response.status == 200
+            try:
+                urllib.request.urlopen("http://127.0.0.1:8080/api/admin/session", timeout=5)
+                raise AssertionError("admin API should be disabled by default")
+            except urllib.error.HTTPError as response:
+                assert response.code == 503
+                assert json.load(response)["error"]["code"] == "admin_unavailable"
+                assert response.headers["cache-control"] == "no-store"
+            cli = subprocess.run(command + ["exec", "-T", "backend", "/app/canvas-admin", "create", "smoke-user"], env=env, capture_output=True, text=True)
+            assert cli.returncode != 0 and "interactive trusted terminal" in cli.stderr
             backend = subprocess.check_output(command + ["ps", "-q", "backend"], env=env, text=True).strip()
             settings = subprocess.check_output(
                 ["docker", "inspect", "-f", "{{.Config.User}} {{.HostConfig.ReadonlyRootfs}}", backend], text=True

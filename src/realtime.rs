@@ -12,6 +12,7 @@ use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
 use crate::{
+    admin::{AdminError, HideResult, SessionProof, ValidatedHide, execute_hide},
     config::{ConfigError, RealtimeSettings},
     domain::{Bounds, StrokeLimits, ValidatedStroke},
     protocol::{AckResult, ErrorCode},
@@ -81,13 +82,15 @@ pub(crate) struct Writer {
 pub(crate) enum Event {
     Created(Arc<StoredStroke>),
     Deleted { id: Uuid, seq: i64, bounds: Bounds },
+    Reset,
 }
 
 impl Event {
-    pub fn bounds(&self) -> Bounds {
+    pub fn bounds(&self) -> Option<Bounds> {
         match self {
-            Self::Created(stroke) => stroke.bounds,
-            Self::Deleted { bounds, .. } => *bounds,
+            Self::Created(stroke) => Some(stroke.bounds),
+            Self::Deleted { bounds, .. } => Some(*bounds),
+            Self::Reset => None,
         }
     }
 }
@@ -110,6 +113,11 @@ enum Command {
     },
     Snapshot {
         reply: oneshot::Sender<Result<Snapshot, ErrorCode>>,
+    },
+    AdminHide {
+        proof: SessionProof,
+        input: ValidatedHide,
+        reply: oneshot::Sender<Result<HideResult, AdminError>>,
     },
 }
 
@@ -136,21 +144,34 @@ impl Writer {
         self.request(|reply| Command::Snapshot { reply }).await
     }
 
-    async fn request<T>(
+    pub(crate) async fn admin_hide(
         &self,
-        build: impl FnOnce(oneshot::Sender<Result<T, ErrorCode>>) -> Command,
-    ) -> Result<T, ErrorCode> {
+        proof: SessionProof,
+        input: ValidatedHide,
+    ) -> Result<HideResult, AdminError> {
+        self.request(|reply| Command::AdminHide {
+            proof,
+            input,
+            reply,
+        })
+        .await
+    }
+
+    async fn request<T, E: From<ErrorCode>>(
+        &self,
+        build: impl FnOnce(oneshot::Sender<Result<T, E>>) -> Command,
+    ) -> Result<T, E> {
         let (reply, response) = oneshot::channel();
-        self.sender
-            .try_send(build(reply))
-            .map_err(|error| match error {
+        self.sender.try_send(build(reply)).map_err(|error| {
+            E::from(match error {
                 mpsc::error::TrySendError::Full(_) => ErrorCode::RateLimited,
                 mpsc::error::TrySendError::Closed(_) => ErrorCode::InternalError,
-            })?;
+            })
+        })?;
         tokio::select! {
-            _ = self.shutdown.cancelled() => Err(ErrorCode::InternalError),
+            _ = self.shutdown.cancelled() => Err(E::from(ErrorCode::InternalError)),
             result = tokio::time::timeout(self.timeout, response) => {
-                result.map_err(|_| ErrorCode::InternalError)?.map_err(|_| ErrorCode::InternalError)?
+                result.map_err(|_| E::from(ErrorCode::InternalError))?.map_err(|_| E::from(ErrorCode::InternalError))?
             }
         }
     }
@@ -178,6 +199,9 @@ async fn run_writer(
                     continue;
                 }
                 let result = create(&pool, stroke, &owner).await;
+                if matches!(result, Err(StorageError::CommitUnknown(_))) {
+                    let _ = events.send(Arc::new(Event::Reset));
+                }
                 let result = result.map(|(record, changed)| {
                     let record = Arc::new(record);
                     if changed {
@@ -194,6 +218,9 @@ async fn run_writer(
                     continue;
                 }
                 let result = delete(&pool, id, &owner).await;
+                if matches!(result, Err(StorageError::CommitUnknown(_))) {
+                    let _ = events.send(Arc::new(Event::Reset));
+                }
                 let result = result.map(|(record, changed)| {
                     if changed {
                         let _ = events.send(Arc::new(Event::Deleted {
@@ -209,6 +236,31 @@ async fn run_writer(
                     }
                 });
                 let _ = reply.send(result.map_err(public_error));
+            }
+            Command::AdminHide {
+                proof,
+                input,
+                reply,
+            } => {
+                if reply.is_closed() {
+                    continue;
+                }
+                let result = execute_hide(&pool, proof, input)
+                    .await
+                    .map(|(result, deleted)| {
+                        for stroke in deleted {
+                            let _ = events.send(Arc::new(Event::Deleted {
+                                id: stroke.id,
+                                seq: stroke.seq,
+                                bounds: stroke.bounds,
+                            }));
+                        }
+                        result
+                    });
+                if matches!(result, Err(AdminError::CommitUnknown)) {
+                    let _ = events.send(Arc::new(Event::Reset));
+                }
+                let _ = reply.send(result);
             }
             Command::Snapshot { reply } => {
                 if reply.is_closed() {
@@ -231,7 +283,10 @@ async fn create(
 ) -> Result<(StoredStroke, bool), StorageError> {
     let mut transaction = pool.begin().await?;
     let result = storage::create(&mut transaction, stroke, owner).await?;
-    transaction.commit().await?;
+    transaction
+        .commit()
+        .await
+        .map_err(StorageError::CommitUnknown)?;
     Ok(result)
 }
 
@@ -242,7 +297,10 @@ async fn delete(
 ) -> Result<(StoredStroke, bool), StorageError> {
     let mut transaction = pool.begin().await?;
     let result = storage::delete(&mut transaction, id, owner).await?;
-    transaction.commit().await?;
+    transaction
+        .commit()
+        .await
+        .map_err(StorageError::CommitUnknown)?;
     Ok(result)
 }
 
@@ -269,7 +327,7 @@ async fn begin_snapshot(
 fn public_error(error: StorageError) -> ErrorCode {
     match error {
         StorageError::Rejected(code) => code,
-        StorageError::Database(error) => {
+        StorageError::Database(error) | StorageError::CommitUnknown(error) => {
             // Log SQLSTATE only, never row details, owner digests or request bodies.
             let sqlstate = error.as_database_error().and_then(|error| error.code());
             tracing::warn!(sqlstate = ?sqlstate, "database operation failed");

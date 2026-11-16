@@ -2,7 +2,7 @@
 
 ## Статус и границы
 
-Подготовлены workflow и скрипты. **Деплой на VPS ещё не запускался**: нужен явный bootstrap и настройка GitHub environment/SSH secrets. Сервер пока только обследован, пакеты/службы/файрвол не менялись.
+Workflow подготовлен; первая попытка Actions остановилась до активации из-за отсутствующего helper. **Серверный bootstrap теперь выполнен**, Docker CE восстановлен/запущен, `/usr/local/sbin/endlessdrawing-activate check` проходит. После этого владелец подтвердил доступ к приложению через SSH-туннель. Это не проверка shared persistence или новой модерации; admin-изменения ещё не выкладывались. SSH/firewall и публичный reverse proxy не менялись.
 
 VPS: `subwhale@212.147.244.161`, Linux amd64, Ubuntu 26.04.1, 2 vCPU, 8 ГБ RAM, диск 40 ГБ (на момент проверки свободно около 35 ГБ). Для начального закрытого стенда достаточно; диск и размер БД/бэкапов контролировать.
 
@@ -41,7 +41,7 @@ exit
 SSH_IDENTITY="$HOME/.ssh/stokholm" bash deploy/bootstrap-remote.sh
 ```
 
-Скрипт требует `sudo -n` на VPS. Он устанавливает Docker/Compose из Ubuntu repositories, включает Docker и размещает:
+Скрипт требует `sudo -n` на VPS. На чистом сервере устанавливает Docker/Compose из Ubuntu repositories; существующую согласованную установку Docker CE или Ubuntu **сохраняет**, не смешивает providers. При незавершённой настройке пакетов останавливается с диагностикой. Включает Docker и размещает:
 
 | Путь на VPS | Содержимое |
 | --- | --- |
@@ -54,6 +54,18 @@ SSH_IDENTITY="$HOME/.ssh/stokholm" bash deploy/bootstrap-remote.sh
 Bootstrap **не** запускает приложение, не открывает порты и не меняет SSH/firewall. Повтор сохраняет существующий runtime.env, но обновляет helper/Compose из проверенного checkout; это нужно после изменений `deploy/`. Изменение Compose само по себе применяется при следующей активации, поэтому такие изменения требуют отдельного review.
 
 Пароль генерируется на сервере и не печатается/не отправляется в GitHub. Изменение env не меняет пароль уже инициализированной БД — ротация требует отдельной процедуры. Runtime env не надо копировать в локальный `.env`, frontend или artifacts.
+
+### Если Actions пишет `endlessdrawing-activate: command not found`
+
+Это отсутствующий/незавершённый bootstrap, не проблема Docker image. Проверить по SSH:
+
+```bash
+sudo test -x /usr/local/sbin/endlessdrawing-activate
+sudo dpkg --audit
+sudo /usr/local/sbin/endlessdrawing-activate check
+```
+
+Если helper отсутствует, сначала устранить незавершённую установку пакетов из **одного** источника и повторить bootstrap. Не смешивать `docker.io`/`containerd`/`docker-compose-v2` с Docker CE `containerd.io`/`docker-compose-plugin`, не обходить конфликт через `dpkg --force-overwrite`. На данном VPS восстановлен Docker CE без удаления данных/volumes, helper установлен и preflight проверен. Повторить Actions → failed run → **Re-run failed jobs**; пересобирать/пушить незавершённую модерацию для этого не требуется.
 
 ## 3. GitHub environment и доступ
 
@@ -165,10 +177,10 @@ Pre-deploy dump создаётся до запуска миграций. `pg_res
 
 - actionlint для обоих workflows, синтаксис Bash и Compose config;
 - 11 тестов activation state machine в Linux-контейнере с mock Docker, включая host lock, failed backup, мало места, failed readiness и image rollback;
-- 43 backend-теста с PostgreSQL; frontend TypeScript, 41 unit-тест и production build;
-- фактическая сборка native ARM64 Docker-образа и smoke-test с одноразовым PostgreSQL: статика/assets, probes, non-root/read-only, отсутствие published DB-порта, `pg_dump` и читаемость архива.
+- 62 backend-теста с PostgreSQL, включая 15 admin-тестов; frontend TypeScript, 41 unit-тест и build были проверены на предыдущем этапе, в этой backend-проверке повторно не запускались;
+- фактическая сборка native ARM64 Docker-образа с provisioning CLI и smoke-test с одноразовым PostgreSQL: статика/assets, probes, non-root/read-only, admin-disabled default, отказ CLI без TTY, отсутствие published DB-порта, `pg_dump` и читаемость архива.
 
-Не проверены реальный Actions run, AMD64 build/deploy на VPS, bootstrap на VPS, полноценное восстановление backup и browser E2E общего мира/модерации. Последние функции frontend/admin ещё не реализованы. AMD64 container smoke-test включён в workflow как gate до SSH.
+Bootstrap на VPS и серверный preflight проверены после восстановления Docker CE; доступ через SSH-туннель затем подтверждён владельцем. Новая модерация на VPS не включалась, полноценное восстановление backup и browser E2E общего мира/модерации пока не подтверждены. Последние функции frontend/admin ещё не реализованы. AMD64 container smoke-test включён в workflow как gate до SSH.
 
 Для повторения локального container smoke-test (не деплой):
 
@@ -181,3 +193,9 @@ python3 tests/deploy/smoke_container.py endlessdrawing-local:check
 ```
 
 Скрипт использует свободный local port 8080 и случайное Compose project name, создаёт/удаляет только собственный тестовый volume. Не запускать его вместо операционного restore-check рабочей БД.
+
+## 8. Admin/passkeys: отдельный gate
+
+`deploy/compose.yml` передаёт `ADMIN_ENABLED` (по умолчанию false), `ADMIN_ORIGIN` и `ADMIN_RP_ID`. Новая копия root-owned Compose должна быть установлена bootstrap до использования этих флагов: Actions доставляет образ, но не обновляет серверный Compose. Никаких CA mounts или admin bearer secrets в runtime.env не требуется.
+
+[Операционная инструкция](admin-operations.md): окончательный HTTPS origin, отдельный frontend entry, доверенный интерактивный SSH provisioning и две passkey регистрации. HTTP SSH-туннель не заменяет HTTPS для Secure cookies и Touch ID. Backend не включается публично на основании software-authenticator тестов. [Dependency audit пока имеет замечания](security-dependencies.md), игноры не добавлены.

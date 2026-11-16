@@ -298,7 +298,8 @@ async fn readiness_tracks_database_and_migrated_schema(pool: PgPool) {
         .await
         .unwrap();
     assert_eq!(response.status(), StatusCode::OK);
-    sqlx::query("DROP TABLE strokes")
+    // Make the expected relation unavailable without breaking moderation foreign keys.
+    sqlx::query("ALTER TABLE strokes RENAME TO test_unavailable_strokes")
         .execute(&pool)
         .await
         .unwrap();

@@ -4,7 +4,7 @@ Backend общего бесконечного холста на **Rust + Axum + 
 
 Требования: [backend](docs/backend.md), [JSON-протокол v1](docs/protocol.md), [frontend](docs/frontend.md).
 
-Эксплуатация: [GitHub Actions → закрытый VPS-стенд](docs/deployment.md). Следующий обязательный этап: [модерация с паролем + WebAuthn/FIDO2](docs/moderation.md).
+Эксплуатация: [GitHub Actions → закрытый VPS-стенд](docs/deployment.md). Модерация: [Admin API](docs/admin-api.md), [закрытый provisioning / Touch ID](docs/admin-operations.md).
 
 ## Текущий этап
 
@@ -21,11 +21,12 @@ Backend общего бесконечного холста на **Rust + Axum + 
 - один последовательный обработчик мутаций, публикация только после commit;
 - многочастный snapshot области из REPEATABLE READ + последующие события без окна потерь;
 - ограниченные очереди/соединения/пакеты, Origin allowlist, sliding-window rate limits, heartbeat и таймауты;
-- unit/HTTP-тесты, integration-тесты PostgreSQL и тесты двух реальных WebSocket-клиентов.
+- opt-in Admin API: пароль + UV-required passkeys (Touch ID/platform/synced), отзываемые server-cookie sessions, закрытый provisioning CLI и атомарное аудируемое скрытие через тот же writer;
+- unit/HTTP/WebAuthn-тесты, integration-тесты PostgreSQL и тесты двух реальных WebSocket-клиентов.
 
-Подготовлен ручной Actions workflow: проверка backend, checkout/build отдельного frontend, один Docker-образ, container smoke-test, SSH-доставка, локальный pre-deploy backup и health-checked активация/попытка image rollback. Стенд закрыт на loopback, bootstrap и GitHub secrets ещё требуют настройки; на VPS деплой не выполнялся.
+Подготовлен ручной Actions workflow: проверка backend, checkout/build отдельного frontend, один Docker-образ, container smoke-test, SSH-доставка, локальный pre-deploy backup и health-checked активация/попытка image rollback. Стенд закрыт на loopback; серверный bootstrap выполнен, Docker CE и helper preflight проверены. По сообщению владельца приложение доступно через SSH-туннель; это не подтверждает shared persistence локального frontend-прототипа. Новая модерация на VPS не активирована.
 
-**Следующий этап:** `/admin/` с логином, паролем и обязательным FIDO2-фактором, атомарное скрытие/аудит через тот же обработчик, ограничения по IP и production TLS/внешние бэкапы. Текущий frontend ещё локальный прототип без WS: его выкладка не означает готовность shared world. До завершения этих этапов сервис не предназначен для публичного запуска. Отдельная HTTP-ручка выборки/изменения штрихов не реализуется: основной путь — WebSocket.
+**Следующий этап:** frontend `/admin/` с enrollment/входом и выделением для скрытия, настоящая Touch ID/passkey проверка на закрытом HTTPS-стенде, review [замечаний зависимостей](docs/security-dependencies.md), ограничения по IP и внешние бэкапы. Текущий frontend ещё локальный прототип без WS: его выкладка не означает готовность shared world. До завершения этих этапов сервис не предназначен для публичного запуска. Отдельная HTTP-ручка выборки/изменения штрихов не реализуется: основной путь — WebSocket.
 
 Rust-пакет оставлен в корне отдельного backend-репозитория, без дополнительной папки `backend/`.
 
@@ -39,7 +40,7 @@ docker compose up -d --wait postgres
 cargo run
 ```
 
-При первом запуске применится `migrations/0001_create_strokes.sql`. Никакая SQLx CLI для этого не нужна. Миграции встроены в бинарник при компиляции; уже применённые файлы не редактировать — добавлять новые.
+Перед запуском HTTP применяются встроенные миграции из `migrations/`, включая таблицы модерации. Никакая SQLx CLI для этого не нужна. Миграции встроены в бинарник при компиляции; уже применённые файлы не редактировать — добавлять новые.
 
 ```bash
 curl -i http://127.0.0.1:3000/healthz
@@ -68,6 +69,9 @@ curl -i http://127.0.0.1:3000/readyz
 | `STROKE_MAX_POINTS` | `2000`, максимум точек в штрихе |
 | `STROKE_MAX_SPAN` | `100000`, максимум размаха точек по каждой оси до расширения bbox |
 | `RUST_LOG` | `info` |
+| `ADMIN_ENABLED` | `false`; admin API по умолчанию выключен |
+| `ADMIN_ORIGIN` | При включении обязателен точный HTTPS origin без `/` на конце |
+| `ADMIN_RP_ID` | При включении обязателен соответствующий RP ID, например `endlessdrawing.com` |
 
 `STROKE_MAX_SPAN=100000` — выбранный начальный защитный предел, не фиксированное число исходного ТЗ. Перед интеграцией согласовать его с frontend. Ширина `[1,64]`, opacity `(0,1]`, диапазон координат `[-1e9,1e9]` фиксированы контрактом.
 
@@ -156,6 +160,8 @@ SQLx создаёт отдельную временную БД для каждо
 
 Проверяются валидация и bbox, строгий входной payload, секрет сессии, конфигурация без утечек, probes/статика, миграции и индексы, JSONB/box, выборка со страницами, soft delete и ограничения БД. Realtime-тесты проверяют два независимых клиента, reload/ownership, чужое удаление, повтор UUID/конфликт/tombstone, offscreen ack, byte-bounded chunks, смену подписки, snapshot при create/delete, overflow буфера, отсутствие событий при rollback, последовательность параллельных мутаций, Origin/hello/payload/connection/rate limits.
 
+Проверены 62 backend-теста, включая 15 admin-тестов: реальные ES256-подписи программных аутентификаторов, UV/RP/challenge/replay/expiry, синхронизируемые passkeys с нулевым counter, конкурентный verify, logout/recovery перед queued hide, атомарность аудита и COMMIT failure → resync/retry. Это не проверка настоящего Touch ID или браузерной интеграции. `cargo audit` пока сообщает транзитивные advisories: [оценка и ограничения](docs/security-dependencies.md).
+
 CI выполняет тот же полный Rust-набор с PostgreSQL 17 и тесты deployment helper (mock Docker, не реальная БД). Deploy workflow дополнительно проверяет frontend check/unit/build и запускает собранный amd64-образ с одноразовым PostgreSQL через production Compose.
 
 ## PostgreSQL и эксплуатационные ограничения
@@ -170,13 +176,15 @@ docker compose up -d --wait postgres
 
 Обычная остановка сохраняет данные. Не удалять volume, если нужны сохранённые штрихи.
 
-Целевая инфраструктура — один VPS для frontend, backend и PostgreSQL, **одна** backend-инстанция. Для публичного развёртывания ещё предстоит настроить TLS/reverse proxy, отдельные production-реквизиты, закрытое административное скрытие, защиту подключений по IP, внешние резервные копии и проверку восстановления. Пароли/ключи/сессионные токены администратора никогда не передаются frontend через `VITE_*`; предусмотрена отдельная серверная MFA-сессия, не универсальный admin-secret.
+Целевая инфраструктура — один VPS для frontend, backend и PostgreSQL, **одна** backend-инстанция. Для публичного развёртывания ещё предстоит настроить TLS/reverse proxy, отдельные production-реквизиты, browser E2E закрытого административного скрытия, review зависимостей, защиту подключений по IP, внешние резервные копии и проверку восстановления. Пароли/ключи/сессионные токены администратора никогда не передаются frontend через `VITE_*`; предусмотрена отдельная серверная MFA-сессия, не универсальный admin-secret.
 
 ## Структура
 
 ```text
 src/main.rs      # env/logging, bootstrap, signals
 src/app.rs       # HTTP router, probes, static assets
+src/admin/       # password + WebAuthn passkeys, sessions, audited moderation
+src/bin/canvas-admin.rs # interactive trusted-terminal create/recover/disable
 src/config.rs    # validated environment settings
 src/db.rs        # pool setup, embedded migrator
 src/domain.rs    # stroke validation, normalized payload, bounds
