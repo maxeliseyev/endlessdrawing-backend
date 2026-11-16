@@ -5,7 +5,8 @@ use std::{env, net::SocketAddr, path::PathBuf, str::FromStr, time::Duration};
 use sqlx::postgres::PgConnectOptions;
 use thiserror::Error;
 
-use crate::domain::StrokeLimits;
+use crate::domain::{StrokeLimits, WORLD_LIMIT};
+pub use crate::realtime_settings::RealtimeSettings;
 
 /// Validated application settings. No Debug implementation: the DSN is sensitive.
 pub struct Config {
@@ -23,6 +24,8 @@ pub struct Config {
     pub static_dir: Option<PathBuf>,
     /// Limits applied when parsing untrusted stroke payloads.
     pub stroke_limits: StrokeLimits,
+    /// WebSocket protocol, resource limits and allowed browser origins.
+    pub realtime: RealtimeSettings,
 }
 
 /// A safe configuration error that contains a key, never its secret value.
@@ -72,6 +75,7 @@ impl Config {
             database_query_timeout: Duration::from_millis(u64::from(query_ms)),
             static_dir,
             stroke_limits,
+            realtime: RealtimeSettings::from_lookup(&lookup)?,
         })
     }
 }
@@ -104,6 +108,134 @@ where
         return Err(ConfigError { key });
     }
     Ok(value)
+}
+
+impl RealtimeSettings {
+    fn from_lookup(lookup: &impl Fn(&str) -> Option<String>) -> Result<Self, ConfigError> {
+        let mut settings = Self::default();
+        if let Some(origins) = lookup("ALLOWED_ORIGINS") {
+            settings.allowed_origins = origins
+                .split(',')
+                .map(str::trim)
+                .map(str::to_owned)
+                .collect();
+        }
+        for (key, target) in [
+            ("WS_MAX_CONNECTIONS", &mut settings.max_connections),
+            ("WS_MAX_MESSAGE_BYTES", &mut settings.max_message_bytes),
+            (
+                "MUTATION_QUEUE_CAPACITY",
+                &mut settings.mutation_queue_capacity,
+            ),
+            ("EVENT_BUFFER_CAPACITY", &mut settings.event_buffer_capacity),
+            ("SNAPSHOT_CHUNK_BYTES", &mut settings.snapshot_chunk_bytes),
+            ("WS_CREATES_PER_SECOND", &mut settings.creates_per_second),
+            ("WS_DELETES_PER_SECOND", &mut settings.deletes_per_second),
+            (
+                "WS_SUBSCRIBES_PER_SECOND",
+                &mut settings.subscribes_per_second,
+            ),
+            ("WS_MESSAGES_PER_SECOND", &mut settings.messages_per_second),
+        ] {
+            *target = positive(lookup, key, *target)?;
+        }
+        settings.snapshot_page_size =
+            positive(lookup, "SNAPSHOT_PAGE_SIZE", settings.snapshot_page_size)?;
+        settings.viewport_max_span = setting(lookup, "VIEWPORT_MAX_SPAN", "30000")?;
+        for (key, target) in [
+            ("WS_HELLO_TIMEOUT_MS", &mut settings.hello_timeout),
+            ("WS_SEND_TIMEOUT_MS", &mut settings.send_timeout),
+            ("WS_OPERATION_TIMEOUT_MS", &mut settings.operation_timeout),
+            ("SNAPSHOT_TIMEOUT_MS", &mut settings.snapshot_timeout),
+            ("WS_HEARTBEAT_INTERVAL_MS", &mut settings.heartbeat_interval),
+            ("WS_IDLE_TIMEOUT_MS", &mut settings.idle_timeout),
+        ] {
+            let millis = positive(lookup, key, target.as_millis() as u64)?;
+            *target = Duration::from_millis(millis);
+        }
+        settings.validate()?;
+        Ok(settings)
+    }
+
+    /// Validates settings supplied either programmatically or through the environment.
+    ///
+    /// # Errors
+    /// Rejects invalid origins, zero/oversized capacities, ranges and timeouts.
+    pub fn validate(&self) -> Result<(), ConfigError> {
+        let invalid = |key| ConfigError { key };
+        if self.allowed_origins.is_empty()
+            || self.allowed_origins.iter().any(|origin| {
+                let Ok(uri) = origin.parse::<axum::http::Uri>() else {
+                    return true;
+                };
+                !matches!(uri.scheme_str(), Some("http" | "https"))
+                    || uri.authority().is_none()
+                    || origin.contains('@')
+                    || format!(
+                        "{}://{}",
+                        uri.scheme_str().unwrap_or_default(),
+                        uri.authority().map(|a| a.as_str()).unwrap_or_default()
+                    ) != *origin
+            })
+        {
+            return Err(invalid("ALLOWED_ORIGINS"));
+        }
+        for (key, value, max) in [
+            ("WS_MAX_CONNECTIONS", self.max_connections, 65_536),
+            ("WS_MAX_MESSAGE_BYTES", self.max_message_bytes, 1024 * 1024),
+            (
+                "MUTATION_QUEUE_CAPACITY",
+                self.mutation_queue_capacity,
+                65_536,
+            ),
+            ("EVENT_BUFFER_CAPACITY", self.event_buffer_capacity, 65_536),
+            (
+                "SNAPSHOT_CHUNK_BYTES",
+                self.snapshot_chunk_bytes,
+                4 * 1024 * 1024,
+            ),
+            ("WS_CREATES_PER_SECOND", self.creates_per_second, 65_536),
+            ("WS_DELETES_PER_SECOND", self.deletes_per_second, 65_536),
+            (
+                "WS_SUBSCRIBES_PER_SECOND",
+                self.subscribes_per_second,
+                65_536,
+            ),
+            ("WS_MESSAGES_PER_SECOND", self.messages_per_second, 65_536),
+        ] {
+            if value == 0 || value > max {
+                return Err(invalid(key));
+            }
+        }
+        if self.snapshot_chunk_bytes < 1024 {
+            return Err(invalid("SNAPSHOT_CHUNK_BYTES"));
+        }
+        if self.snapshot_page_size == 0 || self.snapshot_page_size > 1000 {
+            return Err(invalid("SNAPSHOT_PAGE_SIZE"));
+        }
+        if !self.viewport_max_span.is_finite()
+            || self.viewport_max_span <= 0.0
+            || self.viewport_max_span > 2.0 * WORLD_LIMIT
+        {
+            return Err(invalid("VIEWPORT_MAX_SPAN"));
+        }
+        for (key, timeout) in [
+            ("WS_HELLO_TIMEOUT_MS", self.hello_timeout),
+            ("WS_SEND_TIMEOUT_MS", self.send_timeout),
+            ("WS_OPERATION_TIMEOUT_MS", self.operation_timeout),
+            ("SNAPSHOT_TIMEOUT_MS", self.snapshot_timeout),
+            ("WS_HEARTBEAT_INTERVAL_MS", self.heartbeat_interval),
+            ("WS_IDLE_TIMEOUT_MS", self.idle_timeout),
+        ] {
+            if timeout.is_zero() || timeout > Duration::from_secs(3600) {
+                return Err(invalid(key));
+            }
+        }
+        if self.heartbeat_interval >= self.idle_timeout {
+            return Err(invalid("WS_IDLE_TIMEOUT_MS"));
+        }
+        Ok(())
+    }
 }
 
 #[cfg(test)]
@@ -151,6 +283,62 @@ mod tests {
         assert_eq!(config.static_dir, Some(PathBuf::from("../frontend/dist")));
         assert_eq!(config.stroke_limits.max_points(), 40);
         assert_eq!(config.stroke_limits.max_span(), 500.0);
+    }
+
+    #[test]
+    fn realtime_settings_accept_explicit_origin_limits_and_timeouts() {
+        let config = config_with(&[
+            (
+                "ALLOWED_ORIGINS",
+                "https://canvas.example.com, http://localhost:5173",
+            ),
+            ("WS_MAX_CONNECTIONS", "30"),
+            ("WS_MAX_MESSAGE_BYTES", "65536"),
+            ("SNAPSHOT_PAGE_SIZE", "50"),
+            ("SNAPSHOT_CHUNK_BYTES", "131072"),
+            ("WS_HELLO_TIMEOUT_MS", "2500"),
+            ("WS_CREATES_PER_SECOND", "3"),
+            ("VIEWPORT_MAX_SPAN", "12000"),
+        ])
+        .unwrap();
+        assert_eq!(
+            config.realtime.allowed_origins,
+            ["https://canvas.example.com", "http://localhost:5173"]
+        );
+        assert_eq!(config.realtime.max_connections, 30);
+        assert_eq!(config.realtime.max_message_bytes, 65536);
+        assert_eq!(config.realtime.snapshot_page_size, 50);
+        assert_eq!(config.realtime.snapshot_chunk_bytes, 131072);
+        assert_eq!(config.realtime.hello_timeout, Duration::from_millis(2500));
+        assert_eq!(config.realtime.creates_per_second, 3);
+        assert_eq!(config.realtime.viewport_max_span, 12000.0);
+    }
+
+    #[test]
+    fn rejects_unsafe_realtime_settings() {
+        for (key, value) in [
+            ("ALLOWED_ORIGINS", ""),
+            ("ALLOWED_ORIGINS", "*"),
+            ("ALLOWED_ORIGINS", "https://canvas.example.com/"),
+            (
+                "ALLOWED_ORIGINS",
+                "https://user:password@canvas.example.com",
+            ),
+            ("ALLOWED_ORIGINS", "ftp://canvas.example.com"),
+            ("WS_MAX_CONNECTIONS", "0"),
+            ("WS_MAX_MESSAGE_BYTES", "1048577"),
+            ("SNAPSHOT_CHUNK_BYTES", "100"),
+            ("SNAPSHOT_PAGE_SIZE", "1001"),
+            ("MUTATION_QUEUE_CAPACITY", "0"),
+            ("EVENT_BUFFER_CAPACITY", "0"),
+            ("WS_HELLO_TIMEOUT_MS", "3600001"),
+            ("WS_SEND_TIMEOUT_MS", "0"),
+            ("WS_IDLE_TIMEOUT_MS", "10000"),
+            ("VIEWPORT_MAX_SPAN", "NaN"),
+            ("VIEWPORT_MAX_SPAN", "0"),
+        ] {
+            assert_eq!(config_with(&[(key, value)]).err().unwrap().key, key);
+        }
     }
 
     #[test]

@@ -1,0 +1,146 @@
+name: Deploy staging
+
+# Initially explicit/manual: public launch is blocked on moderation and frontend integration.
+on:
+  workflow_dispatch:
+    inputs:
+      frontend_ref:
+        description: 'Reviewed frontend commit SHA (or main for the latest committed prototype)'
+        type: string
+        required: true
+        default: main
+
+permissions:
+  contents: read
+
+concurrency:
+  group: endlessdrawing-staging
+  cancel-in-progress: false
+
+jobs:
+  verify:
+    uses: ./.github/workflows/ci.yml
+
+  build:
+    needs: verify
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    outputs:
+      release: ${{ steps.metadata.outputs.release }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/checkout@v4
+        with:
+          repository: maxeliseyev/endlessdrawing-frontend
+          ref: ${{ inputs.frontend_ref }}
+          path: frontend-source
+          # Needed only if the separate frontend repo is private; read-only contents access.
+          token: ${{ secrets.FRONTEND_READ_TOKEN || github.token }}
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: frontend-source/package-lock.json
+      - name: Verify and build frontend
+        working-directory: frontend-source
+        run: |
+          npm ci
+          npm run check
+          npm test
+          npm run build
+      - name: Record immutable revisions
+        id: metadata
+        env:
+          BACKEND_SHA: ${{ github.sha }}
+        run: |
+          release="${BACKEND_SHA}-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          frontend_sha=$(git -C frontend-source rev-parse HEAD)
+          echo "release=$release" >> "$GITHUB_OUTPUT"
+          echo "frontend_sha=$frontend_sha" >> "$GITHUB_OUTPUT"
+          mkdir -p release-artifact
+          printf '{"release":"%s","backend_sha":"%s","frontend_sha":"%s"}\n' \
+            "$release" "$BACKEND_SHA" "$frontend_sha" > release-artifact/release.json
+          echo "Frontend revision: $frontend_sha"
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          tags: endlessdrawing-app:${{ steps.metadata.outputs.release }}
+          platforms: linux/amd64
+          outputs: type=docker,dest=${{ runner.temp }}/endlessdrawing-image.tar
+          labels: |
+            org.opencontainers.image.source=https://github.com/maxeliseyev/endlessdrawing-backend
+            org.opencontainers.image.revision=${{ github.sha }}
+            io.endlessdrawing.frontend-revision=${{ steps.metadata.outputs.frontend_sha }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+      - name: Smoke-test the built amd64 image with disposable PostgreSQL
+        env:
+          RELEASE_ID: ${{ steps.metadata.outputs.release }}
+          IMAGE_ARCHIVE: ${{ runner.temp }}/endlessdrawing-image.tar
+        run: |
+          docker image load --input "$IMAGE_ARCHIVE"
+          python3 tests/deploy/smoke_container.py "endlessdrawing-app:$RELEASE_ID" --expected-arch amd64
+      - name: Compress image for SSH transport
+        env:
+          IMAGE_ARCHIVE: ${{ runner.temp }}/endlessdrawing-image.tar
+        run: gzip -1 -c "$IMAGE_ARCHIVE" > release-artifact/image.tar.gz
+      - uses: actions/upload-artifact@v4
+        with:
+          name: endlessdrawing-${{ steps.metadata.outputs.release }}
+          path: release-artifact/
+          retention-days: 7
+          if-no-files-found: error
+          compression-level: 0
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    # Configure allowed branch main + required reviewers before adding SSH secrets.
+    environment: staging
+    env:
+      DEPLOY_HOST: ${{ vars.DEPLOY_HOST }}
+      DEPLOY_USER: ${{ vars.DEPLOY_USER }}
+      DEPLOY_PORT: ${{ vars.DEPLOY_PORT || '22' }}
+      RELEASE: ${{ needs.build.outputs.release }}
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: endlessdrawing-${{ needs.build.outputs.release }}
+          path: release-artifact
+      - name: Deploy over verified SSH
+        env:
+          DEPLOY_SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
+          DEPLOY_KNOWN_HOSTS: ${{ secrets.DEPLOY_KNOWN_HOSTS }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$DEPLOY_HOST" =~ ^[a-zA-Z0-9][a-zA-Z0-9.-]*$ ]]
+          [[ "$DEPLOY_USER" =~ ^[a-z_][a-z0-9_-]*$ ]]
+          [[ "$DEPLOY_PORT" =~ ^[0-9]+$ && "$DEPLOY_PORT" -ge 1 && "$DEPLOY_PORT" -le 65535 ]]
+          [[ "$RELEASE" =~ ^[0-9a-f]{40}-[0-9]+-[0-9]+$ ]]
+          [[ -n "$DEPLOY_SSH_KEY" && -n "$DEPLOY_KNOWN_HOSTS" ]]
+          ssh_dir=$(mktemp -d)
+          trap 'rm -rf -- "$ssh_dir"' EXIT
+          chmod 0700 "$ssh_dir"
+          printf '%s\n' "$DEPLOY_SSH_KEY" | tr -d '\r' > "$ssh_dir/key"
+          printf '%s\n' "$DEPLOY_KNOWN_HOSTS" > "$ssh_dir/known_hosts"
+          chmod 0600 "$ssh_dir/key" "$ssh_dir/known_hosts"
+          options=(-i "$ssh_dir/key" -p "$DEPLOY_PORT" -o IdentitiesOnly=yes \
+            -o BatchMode=yes -o StrictHostKeyChecking=yes \
+            -o "UserKnownHostsFile=$ssh_dir/known_hosts" -o ConnectTimeout=15 \
+            -o ServerAliveInterval=15 -o ServerAliveCountMax=3)
+          target="$DEPLOY_USER@$DEPLOY_HOST"
+          ssh "${options[@]}" "$target" 'sudo -n /usr/local/sbin/endlessdrawing-activate check'
+          ssh "${options[@]}" "$target" "sudo -n /usr/local/sbin/endlessdrawing-activate deploy '$RELEASE'" \
+            < release-artifact/image.tar.gz
+      - name: Deployment summary
+        env:
+          RELEASE_ID: ${{ needs.build.outputs.release }}
+        run: |
+          echo "### Private staging release: $RELEASE_ID" >> "$GITHUB_STEP_SUMMARY"
+          echo 'App is bound to VPS loopback port 8080. Use an SSH tunnel; no public launch.' >> "$GITHUB_STEP_SUMMARY"

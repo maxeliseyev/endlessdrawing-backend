@@ -3,3 +3,7 @@
 .env.*
 !.env.example
 .DS_Store
+/frontend-source/
+/release-artifact/
+__pycache__/
+/deploy/runtime.env

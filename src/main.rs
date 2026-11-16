@@ -1,5 +1,6 @@
 use anyhow::{Context, Result};
-use endless_drawing_server::{app, config::Config, db};
+use endless_drawing_server::{app, config::Config, db, realtime::Realtime};
+use std::time::Duration;
 use tracing_subscriber::EnvFilter;
 
 fn main() -> Result<()> {
@@ -41,18 +42,35 @@ async fn run(config: Config) -> Result<()> {
     let listener = tokio::net::TcpListener::bind(config.bind_addr)
         .await
         .context("could not bind HTTP listener")?;
-    tracing::info!(address = %listener.local_addr()?, "backend ready");
-    let result = axum::serve(
-        listener,
-        app::router(
-            pool.clone(),
-            config.database_query_timeout,
-            config.static_dir,
-        ),
+    let (realtime, mut writer) =
+        Realtime::start(pool.clone(), config.stroke_limits, config.realtime)?;
+    let shutdown = realtime.shutdown_token();
+    let signal_shutdown = shutdown.clone();
+    let application = app::router(
+        pool.clone(),
+        config.database_query_timeout,
+        config.static_dir,
     )
-    .with_graceful_shutdown(shutdown_signal())
-    .await;
-    pool.close().await;
+    .merge(realtime.router());
+    tracing::info!(address = %listener.local_addr()?, "backend ready");
+    let result = axum::serve(listener, application)
+        .with_graceful_shutdown(async move {
+            shutdown_signal().await;
+            signal_shutdown.cancel();
+        })
+        .await;
+    shutdown.cancel();
+    match tokio::time::timeout(Duration::from_secs(30), &mut writer).await {
+        Ok(result) => result.context("mutation worker failed")?,
+        Err(_) => {
+            writer.abort();
+            let _ = writer.await;
+            tracing::warn!("mutation worker exceeded shutdown timeout");
+        }
+    }
+    tokio::time::timeout(Duration::from_secs(30), pool.close())
+        .await
+        .context("database pool exceeded shutdown timeout")?;
     result.context("HTTP server failed")
 }
 

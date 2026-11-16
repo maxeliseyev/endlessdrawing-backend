@@ -1,0 +1,11 @@
+**
+!Cargo.toml
+!Cargo.lock
+!build.rs
+!src/
+!src/**
+!migrations/
+!migrations/**
+!frontend-source/
+!frontend-source/dist/
+!frontend-source/dist/**
