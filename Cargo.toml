@@ -1,0 +1,37 @@
+[package]
+name = "endless-drawing-server"
+version = "0.1.0"
+edition = "2024"
+description = "Single-process backend for a shared infinite drawing canvas"
+publish = false
+
+[dependencies]
+anyhow = "1"
+axum = "0.8"
+base64 = "0.22"
+dotenvy = "0.15"
+serde = { version = "1", features = ["derive"] }
+sha2 = "0.10"
+sqlx = { version = "0.8", default-features = false, features = ["runtime-tokio-rustls", "postgres", "migrate", "macros", "uuid", "json"] }
+thiserror = "2"
+tokio = { version = "1", features = ["fs", "macros", "rt-multi-thread", "net", "signal", "time"] }
+tower-http = { version = "0.6", features = ["fs"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
+uuid = { version = "1", features = ["serde", "v4"] }
+
+[dev-dependencies]
+http-body-util = "0.1"
+serde_json = "1"
+tempfile = "3"
+tower = { version = "0.5", features = ["util"] }
+
+[lints.rust]
+unsafe_code = "forbid"
+
+[lints.clippy]
+correctness = "deny"
+
+[profile.release]
+lto = "thin"
+strip = true
