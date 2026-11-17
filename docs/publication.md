@@ -2,13 +2,18 @@
 
 Цель — настоящий общий сохраняемый холст с модерацией и восстановлением, а не только доступный HTML. Подготовка отдельных компонентов не является разрешением открыть приложение всему Интернету.
 
+## Публичный запуск выполнен 17.11.2026
+
+- [x] Private Caddy gate снят: `/etc/caddy/endlessdrawing/access.caddy` заменён на public snippet (без IP allowlist), старый приватный snippet сохранён как `access.caddy.before-public-20261117T170723Z`, `caddy validate` OK, `systemctl reload caddy` active.
+- [x] Внешняя проверка с GitHub runner (не-allowlisted IP): `readyz=200 {"status":"ready"}`, `admin=200`, `admin_session=401` (без сессии закрыто). Backend остаётся `127.0.0.1:8080`, PostgreSQL не опубликован.
+
 ## Подтверждено на VPS
 
 - [x] Закрытый combined release через [Actions run 44074630461](https://github.com/maxeliseyev/endlessdrawing-backend/actions/runs/44074630461), все public/admin browser, backup и Caddy gates passed.
 - [x] Текущий production release: backend `1571a81dd3e1e574a076cb07d04855a27a702bff` (trusted proxy client IP для admin rate limits), frontend `cd56b8741e0fc786d3b38a4978ab45c2ed97c75e` (test-only: ack + region ink для sparse brushes; app JS идентичен `b631892`). Image `endlessdrawing-app:1571a81dd3e1e574a076cb07d04855a27a702bff-44121697842-1`, runtime DB role **`canvas_app`** (least privilege), migrations 1/2/3/4.
 - [x] Backend `87fa802849fbdc2defcab3033009c0624edce459`, frontend `b631892eb1667b9c489ec78100c8a7e50b874b28` подтверждены по image labels. Migrations 1/2/3/4 successful; TOTP reserve вместо обязательного второго passkey.
 - [x] Readiness 200, admin HTML 200, login/options 200 (`passkey_uv`); session 401 без входа. Canonical HTTPS admin API включён, сохранён существующий 1 passkey владельца, TOTP enabled. Владелец сообщил, что всё работает; audit подтверждает primary login, TOTP enable, logout и реальный strokes_hidden. Successful backup-login event при последней проверке ещё не наблюдался. Пароль/enrollment capability агент не создавал.
-- [x] App только `127.0.0.1:8080`, БД без public port; SSH сохранён. Caddy 2.11.9 active/enabled на 80/443 с доверенным Let's Encrypt TLS; admin endpoint только `127.0.0.1:2019`, API service masked. UFW allow 80/443 существовал ранее и не менялся. Все неразрешённые peers получают 403; явно подтверждённый operator `/32` допущен для закрытой приёмки.
+- [x] App только `127.0.0.1:8080`, БД без public port; SSH сохранён. Caddy 2.11.9 active/enabled на 80/443 с доверенным Let's Encrypt TLS; admin endpoint только `127.0.0.1:2019`, API service masked. UFW allow 80/443 существовал ранее и не менялся. После публичного запуска сайт открыт всем peers; backend/БД остаются изолированы.
 - [x] Для Storage Box создан отдельный SSH key в `/etc/endlessdrawing/backup/id_ed25519`, без вывода приватного ключа. Это не age identity. Никаких изменений каталога/cron/credentials construct не делалось.
 
 ## Реализовано и проверено (активация указана отдельно)
@@ -43,7 +48,7 @@
 - [x] Trusted proxy/client-IP/rate limits: backend читает `X-Forwarded-For` только когда прямой peer — loopback (доверенный Caddy); не-loopback peer не может подменить заголовок, и malformed/missing XFF падает обратно на прямой peer. Unit tests покрывают leftmost IP, non-loopback spoof и fallback. Shared proxy IP не считается отдельным посетителем; Caddy gate по-прежнему доверяет socket `remote_ip`, а не caller headers.
 - [x] Dependency audit review по [security-dependencies.md](security-dependencies.md): `cargo audit` — 3 vulnerability-записи + 1 unmaintained warning, все оценены (2 не компилируются, 1 активная Marvin неприменима к публичной проверке подписей, chrono unmaintained). Игноры не добавлены; CI guard запрещает активацию неиспользуемых SQLite/MySQL графов. Владелец явно принял остаточный риск 17.11.2026. Server/SSH hardening, monitoring и backup restore уже проверены; нагрузочное профилирование/физическая mobile acceptance остаются отдельной приёмкой после запуска.
 - [x] Владелец утвердил правила модерации/юрисдикцию: отталкиваемся от **законов США**. Retention tombstones/audit/backup: soft delete скрывает публично, но не удаляет физически данные из archive (7 daily / 4 weekly backups).
-- [x] Владелец явно разрешил публичное открытие после своей проверки. Разрешение не означает, что незакрытые технические риски уже устранены/приняты: private gate пока сохранён из-за runtime DB superuser и WAN instability; Telegram delivery теперь подтверждена. Независимый off-VPS outage monitor остаётся отдельной задачей. Повторно разрешение спрашивать не нужно после закрытия этих blockers. Rollback image не восстанавливает БД автоматически.
+- [x] Владелец явно разрешил публичное открытие после своей проверки и подтвердил все пункты: runtime DB superuser и WAN instability устранены, Telegram delivery и off-VPS dead-man подтверждены, dependency риск принят. Private gate снят 17.11.2026, внешняя публичная проверка passed. Rollback image не восстанавливает БД автоматически.
 
 - [x] TOTP backend/frontend и private server KEK deployed; полноценный post-deploy off-site format-2 round-trip `20261117T120450Z-993e4835` восстановил schema 1/2/3/4 + encryption file. Private key и setup seed не захватывались агентом.
 
