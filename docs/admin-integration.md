@@ -1,5 +1,18 @@
 # Совместная проверка и интегрированный staging-релиз
 
+## Новая проверенная пара для закрытой выкладки (17.11.2026)
+
+Выбран merged frontend `5cc6de756db5ca50f4cc8d745507ae3b85aecd56` (PR #1: public WS, zoom, touch), требующий backend migration 0003 (`1473251`, уже в main). Проверен в отдельном detached worktree, основной frontend checkout не менялся.
+
+- TypeScript/build + **127 unit tests** passed; Chromium/Firefox/WebKit mock suite **169 passed / 2 CDP-only skips**.
+- При первом параллельном запуске двух Playwright suites они использовали общий `test-results` и получили три failures, включая ENOENT артефактов. Последовательный полный rerun прошёл. Новый public helper выделяет собственный output directory, чтобы исключить эту гонку.
+- **Real public UI ↔ Axum ↔ PostgreSQL**, без mocks: **3/3 browsers** passed, два посетителя, ownership, reload/undo, chisel/spray и поздний snapshot. Helper `tests/deploy/smoke_public.py` создаёт только новую случайную DB, использует loopback/local Docker, удаляет собственную DB после завершения; source DB не используется и не удаляется.
+- Реальный admin HTTPS/WebAuthn/API/WS/DB test повторён с этим frontend: passed. Аутентификаторы виртуальные, настоящий Touch ID остаётся ручным gate.
+- **37 deployment safety tests** passed. Deploy workflow теперь запускает public 3-browser gate **и** admin HTTPS gate до image build/SSH.
+- Production HTTPS уже доверенный; Caddy разрешает только подтверждённый operator `/32` и loopback. Неавторизованный peer по-прежнему 403 даже с spoofed forwarded IP. Admin включается только штатным manual Actions deploy; аккаунт/секреты агент не создаёт.
+
+## Исторический релиз admin (13f3ab1)
+
 Frontend: `623c5a6b3bbbf4cfc549f1329af0aa64c9fc3771` (`feat: add isolated admin frontend with passkey authentication and moderation`). Backend собирает его целый `dist/` в один образ; копировать исходники приложений между репозиториями или сливать их Git history не нужно.
 
 ## Что проверено локально
@@ -34,14 +47,14 @@ DATABASE_URL=postgres://canvas:canvas_dev_only@127.0.0.1:55432/canvas \
 
 ## Deployment gate
 
-Manual Actions `Deploy staging` теперь до image build/SSH выполняет этот тест с зафиксированным `frontend_ref`, PostgreSQL 17 и Chromium. Затем собирает linux/amd64 образ, делает container smoke и штатный backup/readiness deploy. Release manifest и image labels фиксируют оба SHA. Автоматического публичного deploy с push main нет.
+Manual Actions `Deploy staging` до image build/SSH выполняет admin test и real public UI test с зафиксированным `frontend_ref`, PostgreSQL 17 и Chromium/Firefox/WebKit. Теперь требуется frontend с `test:integration` и public WS (5cc6de7 либо reviewed successor). Затем собирает linux/amd64 образ, делает container smoke и штатный backup/readiness deploy. Release manifest и image labels фиксируют оба SHA. Автоматического публичного deploy с push main нет.
 
 Актуальные Compose/helper установлены на VPS штатным bootstrap; существующие runtime.env, DB credentials и volume сохранены. Вход администратора остаётся выключенным (`ADMIN_ENABLED=false` по умолчанию). HTML `/admin/` можно открыть для проверки загрузки/сообщения «администрирование не настроено», но все admin API, включая enrollment/login/session/hide, при выключенном admin возвращают 503.
 
 ## Ещё не пройдено
 
 - Настоящий Touch ID / резервный passkey provider на доверенном окончательном HTTPS origin; закрытый пользовательский SSH provisioning без захвата capability агентом.
-- Публичный read/write frontend realtime (сейчас только admin имеет WS transport), server-side chisel/spray и их end-to-end persistence.
-- Production HTTPS/network gate, замечания dependency audit, DB roles и внешние backup/restore. См. [admin-operations.md](admin-operations.md), [security-dependencies.md](security-dependencies.md).
+- Закрытая VPS-выкладка выбранной новой пары и browser acceptance по настоящему HTTPS; публичный transport/кисти уже проверены локально, но это не подтверждение реальных iPhone/iPad/нагрузки.
+- Замечания dependency audit, DB roles, внешние alerts/provider deletion protection. Доверенный HTTPS/private gate и настоящие off-site decrypt/restore уже подтверждены отдельно. См. [admin-operations.md](admin-operations.md), [security-dependencies.md](security-dependencies.md).
 
 Закрытая выкладка новой сборки не разрешает публичный запуск продукта и не доказывает сохранение штрихов локального drawing-прототипа.

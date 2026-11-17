@@ -5,7 +5,7 @@ on:
   workflow_dispatch:
     inputs:
       frontend_ref:
-        description: 'Reviewed frontend commit SHA including the separate admin entry'
+        description: 'Reviewed frontend commit SHA with shared public canvas and separate admin entry'
         type: string
         required: true
         default: main
@@ -68,9 +68,9 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: clippy
-      - name: Install Chromium for real frontend/backend integration
+      - name: Install browsers for real public/admin integration
         working-directory: frontend-source
-        run: npx playwright install --with-deps chromium
+        run: npx playwright install --with-deps chromium firefox webkit
       - name: Verify real HTTPS admin integration before building the release
         env:
           FRONTEND_DIR: ${{ github.workspace }}/frontend-source
@@ -78,6 +78,15 @@ jobs:
         run: |
           cargo clippy --locked --features browser-integration --test admin_browser -- -D warnings
           cargo test --locked --features browser-integration --test admin_browser -- --ignored
+      - name: Verify real public world before building the release
+        env:
+          DATABASE_URL: postgres://canvas:canvas_browser_ci_only@127.0.0.1:5432/canvas
+          POSTGRES_TEST_CONTAINER: ${{ job.services.postgres.id }}
+        run: |
+          cargo build --locked --bin endless-drawing-server
+          python3 tests/deploy/smoke_public.py --frontend frontend-source \
+            --backend target/debug/endless-drawing-server \
+            --postgres-container "$POSTGRES_TEST_CONTAINER"
       - name: Record immutable revisions
         id: metadata
         env:

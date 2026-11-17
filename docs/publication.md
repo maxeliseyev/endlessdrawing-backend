@@ -7,7 +7,7 @@
 - [x] Закрытый combined release через [Actions run 43971072004](https://github.com/maxeliseyev/endlessdrawing-backend/actions/runs/43971072004).
 - [x] Backend `13f3ab1260f42b3cb934ff9c1f9a6f3af14fec38`, frontend `623c5a6b3bbbf4cfc549f1329af0aa64c9fc3771` подтверждены по image labels после выкладки.
 - [x] Readiness 200, admin HTML 200; admin API 503 = намеренно disabled, не успешная авторизация.
-- [x] App только `127.0.0.1:8080`, БД без public port; SSH сохранён. Caddy 2.11.9 active/enabled на 80/443 с доверенным Let's Encrypt TLS; admin endpoint только `127.0.0.1:2019`, API service masked. UFW allow 80/443 существовал ранее и не менялся. Снаружи приложение по-прежнему 403.
+- [x] App только `127.0.0.1:8080`, БД без public port; SSH сохранён. Caddy 2.11.9 active/enabled на 80/443 с доверенным Let's Encrypt TLS; admin endpoint только `127.0.0.1:2019`, API service masked. UFW allow 80/443 существовал ранее и не менялся. Все неразрешённые peers получают 403; явно подтверждённый operator `/32` допущен для закрытой приёмки.
 - [x] Для Storage Box создан отдельный SSH key в `/etc/endlessdrawing/backup/id_ed25519`, без вывода приватного ключа. Это не age identity. Никаких изменений каталога/cron/credentials construct не делалось.
 
 ## Реализовано и проверено (активация указана отдельно)
@@ -29,9 +29,9 @@
 - [ ] Подтвердить отдельную копию private age identity в менеджере паролей; файл на Mac уже проверен. Выбрать/проверить Storage Box snapshots или другую защиту от удаления upload key.
 - [ ] Подключить мониторинг квоты Box/диска/WAL и проверить доставку внешнего failure/stale-backup alert. Daily timer и recent off-site success уже проверены, но journal и health CLI сами никого не уведомляют.
 - [x] DNS only A → `212.147.244.161`, AAAA/CAA ответов нет. Caddy запущен без default welcome window; доверенный Let's Encrypt certificate/TLS 1.3 проверен без обходов trust. Внешние HTTPS `/`, `/admin/`, API, readyz и ws — 403, spoofed forwarded IP не помогает; loopback HTTPS backend ready.
-- [ ] Разрешить только явно подтверждённый текущий public peer IP оператора для настоящего браузера. Пока whitelist только loopback; не открывать весь Интернет/Cloudflare ради приёмки.
+- [x] В whitelist добавлен только явно подтверждённый operator public `/32` плюс loopback. Operator HTTPS HTML 200; неразрешённый peer 403, spoofed разрешённый forwarded IP не помогает. Интернет/Cloudflare целиком не разрешались.
 - [ ] Включить admin API только на конечном HTTPS origin. Оператор закрыто создаёт аккаунт, регистрирует настоящие основной/резервный passkeys и проверяет Touch ID/login/logout/recovery/отмену/неверный пароль. Два iCloud-синхронизированных устройства не означают два credentials.
-- [ ] Выбрать reviewed commit нового frontend с public WS / brushes; backend migration 0003 уже закоммичена отдельно (`1473251`). Текущий VPS release всё ещё frontend `623c5a6` с локальным drawing-прототипом; локальные integration tests не означают выкладку. Не терять работу параллельной frontend-сессии.
+- [x] Для закрытой выкладки выбран merged frontend `5cc6de756db5ca50f4cc8d745507ae3b85aecd56` (PR #1), backend migration 0003 уже в main (`1473251`). В отдельном worktree прошли 127 unit, 169 browser mock tests / 2 skips, 3 real public browser tests и real admin HTTPS test. Основной frontend checkout не менялся. Выкладка ещё должна пройти Actions.
 - [ ] Единый новый reviewed SHA pair прошёл backend CI, public/admin real-browser integration, owner-only erase/undo, все brush round-trip, live moderation у двух реальных UI clients, reconnect/reload и truthful pending/error UX. Опубликовать через Actions, не копировать грязный dist на VPS.
 - [ ] Разделить maintenance/migration/backup DB role и runtime app role; приложение не должно ходить superuser. Согласовать embedded migrations с этим режимом до переключения.
 - [ ] Trusted proxy/client-IP/rate/connection limits проверены; не превращать X-Forwarded-For в источник прав и не считать shared proxy IP отдельным посетителем.
