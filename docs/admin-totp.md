@@ -2,7 +2,7 @@
 
 ## Подтверждённая выкладка
 
-[Actions 44074630461](https://github.com/maxeliseyev/endlessdrawing-backend/actions/runs/44074630461) success: backend `87fa802849fbdc2defcab3033009c0624edce459`, frontend `b631892eb1667b9c489ec78100c8a7e50b874b28`. Migrations 1/2/3/4 applied, image labels checked; существующий единственный passkey сохранён, TOTP ещё не подключён владельцем. Native trusted-HTTPS browser проверил новый вход/подсказки/backup button без ввода реальных credentials. Private KEK read-only mount проверен, raw key не печатался.
+[Actions 44074630461](https://github.com/maxeliseyev/endlessdrawing-backend/actions/runs/44074630461) success: backend `87fa802849fbdc2defcab3033009c0624edce459`, frontend `b631892eb1667b9c489ec78100c8a7e50b874b28`. Migrations 1/2/3/4 applied, image labels checked; существующий единственный passkey сохранён. Позже владелец включил TOTP через fresh-UV setup (17.11.2026, audit `totp_enabled`), primary login/secret/QR агент не захватывал. Native trusted-HTTPS browser проверил новый вход/подсказки/backup button без ввода реальных credentials. Private KEK read-only mount проверен, raw key не печатался.
 
 72 backend tests (20 admin), fmt/Clippy, 38 deployment/backup tests, 127 frontend unit, 190 browser tests / 2 CDP skips, real HTTPS UV + QR + TOTP login integration passed. Аутентификаторы и TOTP seeds в автотестах только эфемерные fixtures. Dependency audit по-прежнему имеет прежние 3 findings / 2 advisories, новых игноров нет.
 

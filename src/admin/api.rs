@@ -80,6 +80,27 @@ fn exact_origin(headers: &HeaderMap, expected: &str) -> bool {
     matches && origins.next().is_none()
 }
 
+/// The trusted reverse proxy (Caddy) is the only thing that may present a
+/// forwarded address. From any non-loopback peer we never read forwarded
+/// headers, so spoofing them cannot change whose requests get rate-limited.
+fn client_ip(request: &Request) -> Option<IpAddr> {
+    let peer = request
+        .extensions()
+        .get::<ConnectInfo<SocketAddr>>()?
+        .0
+        .ip();
+    if !peer.is_loopback() {
+        return Some(peer);
+    }
+    let forwarded = request
+        .headers()
+        .get("x-forwarded-for")
+        .and_then(|value| value.to_str().ok())
+        .and_then(|value| value.split(',').next())
+        .and_then(|value| value.trim().parse().ok());
+    Some(forwarded.unwrap_or(peer))
+}
+
 async fn guard(State(state): State<Routes>, mut request: Request, next: Next) -> Response {
     let is_api = request.uri().path().starts_with("/api/admin/");
     let allowed = match &state.service {
@@ -99,11 +120,7 @@ async fn guard(State(state): State<Routes>, mut request: Request, next: Next) ->
             if wrong_origin || cross_site_get {
                 Err(AdminError::Forbidden)
             } else if is_api {
-                match request
-                    .extensions()
-                    .get::<ConnectInfo<SocketAddr>>()
-                    .map(|peer| peer.0.ip())
-                {
+                match client_ip(&request) {
                     None => Err(AdminError::Unavailable),
                     Some(ip) => {
                         let rate = service
@@ -352,4 +369,62 @@ async fn operation(
 ) -> Result<Response, AdminError> {
     let Path(id) = path.map_err(|_| AdminError::Invalid)?;
     Ok(Json(enabled(&state)?.operation(&headers, id).await?).into_response())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use axum::body::Body;
+
+    fn peer_request(peer: &str, forwarded: Option<&str>) -> Request {
+        let mut request = Request::builder()
+            .method(Method::GET)
+            .uri("/api/admin/session")
+            .body(Body::empty())
+            .unwrap();
+        request
+            .extensions_mut()
+            .insert(ConnectInfo(peer.parse::<SocketAddr>().unwrap()));
+        if let Some(value) = forwarded {
+            request
+                .headers_mut()
+                .insert("x-forwarded-for", HeaderValue::from_str(value).unwrap());
+        }
+        request
+    }
+
+    #[test]
+    fn loopback_proxy_uses_leftmost_forwarded_ip_and_non_loopback_ignores_header() {
+        assert_eq!(
+            client_ip(&peer_request(
+                "127.0.0.1:8080",
+                Some("198.51.100.7, 10.0.0.1")
+            )),
+            Some("198.51.100.7".parse().unwrap())
+        );
+        assert_eq!(
+            client_ip(&peer_request("[::1]:8080", Some(" 198.51.100.9 "))),
+            Some("198.51.100.9".parse().unwrap())
+        );
+        // A non-loopback peer (e.g. someone bypassing the proxy) cannot spoof.
+        assert_eq!(
+            client_ip(&peer_request("203.0.113.5:8080", Some("198.51.100.7"))),
+            Some("203.0.113.5".parse().unwrap())
+        );
+    }
+
+    #[test]
+    fn malformed_or_missing_forwarded_ip_falls_back_to_direct_peer() {
+        assert_eq!(
+            client_ip(&peer_request("127.0.0.1:8080", None)),
+            Some("127.0.0.1".parse().unwrap())
+        );
+        for malformed in ["", "not-an-ip", ",198.51.100.7"] {
+            assert_eq!(
+                client_ip(&peer_request("127.0.0.1:8080", Some(malformed))),
+                Some("127.0.0.1".parse().unwrap()),
+                "unexpected result for {malformed:?}"
+            );
+        }
+    }
 }

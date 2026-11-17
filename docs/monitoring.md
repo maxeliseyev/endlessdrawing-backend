@@ -8,6 +8,40 @@
 
 Это VPS-local watchdog, не независимая проверка полностью выключенного/отрезанного VPS. При падении хоста, сети или самого watchdog сообщения отправить некому. Внешний dead-man/uplink monitor на другом хосте или hosted service остаётся отдельным launch gate. Не обещать уведомление о полном падении машины по одному этому timer.
 
+## Независимый off-VPS dead-man (устройство владельца)
+
+`deploy/deadman-monitor.py` + `deploy/deadman/endlessdrawing.deadman.plist` — независимая проверка `https://endlessdrawing.com/readyz` с всегда включённого устройства владельца (launchd, каждые 10 минут). Alert только после N подряд неудач, одно восстановление, не спам. Это закрывает «полностью выпал VPS/его сеть»: сообщение шлёт не VPS.
+
+Установка (только владелец на своём Mac, token в Keychain, не в chat/CI/репозиторий):
+
+```bash
+# 1) Скопировать скрипт и поставить launchd agent
+install -m 0755 deploy/deadman-monitor.py /usr/local/bin/endlessdrawing-deadman
+cp deploy/deadman/endlessdrawing.deadman.plist ~/Library/LaunchAgents/
+launchctl load ~/Library/LaunchAgents/endlessdrawing.deadman.plist
+
+# 2) token ТОЛЬКО в macOS Keychain (не argv/env/history)
+security add-generic-password -s endlessdrawing-deadman-token -a owner -w
+# вставить bot token, Enter
+
+# 3) несекретный conf (chat ID + пороги), owner 0600
+install -d -m 0700 ~/.config/endlessdrawing
+cat > ~/.config/endlessdrawing/deadman.conf <<'EOF'
+TELEGRAM_CHAT_ID=15494483
+CHECK_TIMEOUT_SECONDS=15
+FAILURE_THRESHOLD=3
+EOF
+chmod 0600 ~/.config/endlessdrawing/deadman.conf
+
+# 4) тестовая доставка
+/usr/local/bin/endlessdrawing-deadman test
+
+# 5) ручной прогон
+/usr/local/bin/endlessdrawing-deadman check
+```
+
+State — `~/.local/share/endlessdrawing-deadman/state.json` (счётчик неудач + timestamp), без token/chat message bodies. Token читается только `security find-generic-password`, в файлы/логи/argv не пишется. Чат ID не секретен; token в чат не присылать.
+
 ## Что проверяется
 
 Каждые 15 минут (+ до 30s), и сразу по systemd OnFailure backup job:
@@ -55,4 +89,4 @@ State в `/var/lib/endlessdrawing-monitor/state.json` — только issues/ti
 
 `deploy/install-operations.sh` устанавливает helper и units, но не включает monitor и не создаёт Telegram credentials. Существующий backup timer сохраняется. Config отсутствует → monitor service пропускается по ConditionPathExists, это не «monitoring ready».
 
-Linux safety suite: **53 tests** (38 прежних, missing-TOTP-key backup guard и 14 monitor tests): privacy/permissions/symlink guards, token/ID parsing, read-only quota, health/expiry/staleness thresholds, failure dedup/recovery/daily policy, no redirects, redacted provider errors, no false success after failed send, TTY-only setup и обязательное ручное подтверждение доставки. Unit tests не подтверждают настоящую Telegram delivery.
+Linux safety suite: **66 tests** (53 прежних, role-helper и dead-man conf/decision), privacy/permissions/symlink guards, token/ID parsing, read-only quota, health/expiry/staleness thresholds, failure dedup/recovery/daily policy, no redirects, redacted provider errors, no false success after failed send, TTY-only setup и обязательное ручное подтверждение доставки. Unit tests не подтверждают настоящую Telegram delivery.
