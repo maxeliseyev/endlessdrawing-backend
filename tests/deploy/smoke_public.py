@@ -59,7 +59,8 @@ def main():
         env = os.environ.copy()
         env.update(DATABASE_URL=urllib.parse.urlunsplit(source._replace(path='/' + database)),
                    BIND_ADDR=f'127.0.0.1:{port}', STATIC_DIR=str(frontend / 'dist'),
-                   ALLOWED_ORIGINS=origin, ADMIN_ENABLED='false', E2E_BACKEND_URL=origin)
+                   ALLOWED_ORIGINS=origin, ADMIN_ENABLED='false', E2E_BACKEND_URL=origin,
+                   DATABASE_MIGRATE_ON_START='true', DATABASE_REQUIRE_RUNTIME_ROLE='false')
         with tempfile.TemporaryDirectory(prefix='endlessdrawing-public-browser-') as temporary:
             with (Path(temporary) / 'private-backend.log').open('wb') as log:
                 process = subprocess.Popen([str(backend)], env=env, stdin=subprocess.DEVNULL, stdout=log, stderr=log)

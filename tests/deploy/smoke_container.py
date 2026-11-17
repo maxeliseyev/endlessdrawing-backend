@@ -41,6 +41,7 @@ def main():
             "POSTGRES_DB=canvas\nPOSTGRES_USER=canvas\n"
             f"POSTGRES_PASSWORD={password}\n"
             f"DATABASE_URL=postgres://canvas:{password}@postgres:5432/canvas\n"
+            f"MIGRATION_DATABASE_URL=postgres://canvas:{password}@postgres:5432/canvas\n"
             "ALLOWED_ORIGINS=http://localhost:8080,http://127.0.0.1:8080\nRUST_LOG=info\n"
         )
         env_file.chmod(0o600)
@@ -48,6 +49,9 @@ def main():
         # Do not let a developer/CI DATABASE_URL override the disposable test credentials.
         for key in ("POSTGRES_DB", "POSTGRES_USER", "POSTGRES_PASSWORD", "DATABASE_URL", "ALLOWED_ORIGINS", "RUST_LOG", "ADMIN_ENABLED", "ADMIN_ORIGIN", "ADMIN_RP_ID"):
             env.pop(key, None)
+        env.pop('MIGRATION_DATABASE_URL', None)
+        env['DATABASE_MIGRATE_ON_START'] = 'false'
+        env['DATABASE_REQUIRE_RUNTIME_ROLE'] = 'false'
         secret_dir = Path(directory) / 'empty-admin-secrets'
         secret_dir.mkdir()
         env['ADMIN_SECRETS_DIR'] = str(secret_dir)
@@ -56,7 +60,9 @@ def main():
         env["ADMIN_ENABLED"] = "false"
         command = ["docker", "compose", "-p", project, "--env-file", str(env_file), "-f", str(ROOT / "deploy" / "compose.yml")]
         try:
-            subprocess.run(command + ["up", "-d", "--wait", "--wait-timeout", "120"], env=env, check=True)
+            subprocess.run(command + ["up", "-d", "--wait", "--wait-timeout", "120", "postgres"], env=env, check=True)
+            subprocess.run(command + ["run", "--rm", "--no-deps", "migrate"], env=env, check=True)
+            subprocess.run(command + ["up", "-d", "--no-deps", "--wait", "--wait-timeout", "120", "backend"], env=env, check=True)
             for _ in range(100):
                 try:
                     with urllib.request.urlopen("http://127.0.0.1:8080/readyz", timeout=1) as response:

@@ -26,6 +26,7 @@ install -o root -g root -m 0755 "$source_dir/backup.sh" /usr/local/sbin/endlessd
 install -o root -g root -m 0755 "$source_dir/backup-storagebox.py" /usr/local/sbin/endlessdrawing-backup
 install -o root -g root -m 0755 "$source_dir/backup-health.py" /usr/local/sbin/endlessdrawing-backup-health
 install -o root -g root -m 0755 "$source_dir/monitor.py" /usr/local/sbin/endlessdrawing-monitor
+install -o root -g root -m 0755 "$source_dir/db-roles.py" /usr/local/sbin/endlessdrawing-db-roles
 if [[ ! -e /etc/endlessdrawing/backup.env ]]; then
     install -o root -g root -m 0600 "$source_dir/backup.env.example" /etc/endlessdrawing/backup.env
 fi

@@ -41,10 +41,17 @@ async fn run(config: Config) -> Result<()> {
     let pool = db::connect(&config)
         .await
         .context("could not connect to PostgreSQL")?;
-    db::MIGRATOR
-        .run(&pool)
-        .await
-        .context("could not apply database migrations")?;
+    if config.database_require_runtime_role {
+        db::verify_runtime_role(&pool).await?;
+    }
+    if config.database_migrate_on_start {
+        db::MIGRATOR
+            .run(&pool)
+            .await
+            .context("could not apply database migrations")?;
+    } else {
+        db::verify_schema(&pool).await?;
+    }
     let listener = tokio::net::TcpListener::bind(config.bind_addr)
         .await
         .context("could not bind HTTP listener")?;

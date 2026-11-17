@@ -74,6 +74,14 @@ compose exec -T postgres sh -c 'exec pg_dump -U "$POSTGRES_USER" -d "$POSTGRES_D
 compose exec -T postgres pg_restore --list < "$backup_tmp" > /dev/null
 mv -- "$backup_tmp" "$backup"
 
+# Maintenance credentials reach ONLY the short-lived migration service, never backend.
+# Leave the old app untouched if migration/manifest verification fails.
+migration_log="$backup.migrate.log"
+if ! compose run --rm --no-deps migrate > "$migration_log" 2>&1; then
+    fail 'Maintenance migration failed before backend replacement; inspect the private migration log. Current backend left untouched.'
+fi
+rm -f -- "$migration_log"
+
 if compose up -d --no-deps --wait --wait-timeout 120 backend; then
     if [[ -n $previous && $previous != "$image" ]]; then
         printf '%s\n' "$previous" > "$app_dir/previous-image.tmp"

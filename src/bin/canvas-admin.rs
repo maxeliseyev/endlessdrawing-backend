@@ -47,7 +47,9 @@ fn main() -> Result<()> {
     let config = Config::from_env()?;
     tokio::runtime::Builder::new_multi_thread().enable_all().build()?.block_on(async {
         let pool = db::connect(&config).await.context("could not connect to PostgreSQL")?;
-        // The running server must already have applied this image's migrations.
+        // The running server must already have this image's schema; never do DDL here.
+        db::verify_schema(&pool).await?;
+        if config.database_require_runtime_role { db::verify_runtime_role(&pool).await?; }
         let result = match args[0].as_str() {
             "create" => Some(provision::create(&pool, &args[1], password.ok_or_else(|| anyhow::anyhow!("missing password"))?).await?),
             "recover" => Some(provision::recover(&pool, &args[1], password.ok_or_else(|| anyhow::anyhow!("missing password"))?).await?),

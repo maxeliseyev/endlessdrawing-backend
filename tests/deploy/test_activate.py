@@ -48,6 +48,10 @@ if args[:2] == ["exec", "-T"]:
     else:
         sys.exit(91)
     sys.exit(0)
+if args[:1] == ["run"] and args[-1] == "migrate":
+    if os.environ.get("MOCK_MIGRATE_FAIL"):
+        sys.exit(1)
+    sys.exit(0)
 if args[:1] == ["up"]:
     if args[-1] == "backend":
         if os.environ.get("MOCK_FAIL_ALL") or image == os.environ.get("MOCK_FAIL_IMAGE"):
@@ -79,7 +83,7 @@ class ActivationTests(unittest.TestCase):
             ENDLESSDRAWING_CONFIG_DIR=str(self.config),
             MOCK_DOCKER_LOG=str(self.log),
         )
-        for key in ("MOCK_FAIL_ALL", "MOCK_FAIL_IMAGE", "MOCK_BACKUP_FAIL", "MOCK_DATABASE_BYTES"):
+        for key in ("MOCK_FAIL_ALL", "MOCK_FAIL_IMAGE", "MOCK_BACKUP_FAIL", "MOCK_DATABASE_BYTES", "MOCK_MIGRATE_FAIL"):
             self.env.pop(key, None)
         self.executable("docker", FAKE_DOCKER)
         self.executable("df", "#!/bin/sh\nprintf 'Filesystem 1024-blocks Used Available Capacity Mounted\\nmock 20000000 1000 19000000 1%% /\\n'\n")
@@ -114,6 +118,16 @@ class ActivationTests(unittest.TestCase):
 
     def backend_starts(self):
         return [call["image"] for call in self.calls() if "up" in call["args"] and call["args"][-1] == "backend"]
+
+    def test_migration_failure_leaves_old_backend_and_current_state_untouched(self):
+        self.record_current()
+        self.env['MOCK_MIGRATE_FAIL']='1'
+        result=self.run_activation('deploy',SECOND)
+        self.assertNotEqual(result.returncode,0)
+        self.assertIn(b'Current backend left untouched',result.stderr)
+        self.assertEqual(self.current(),PREFIX+FIRST)
+        self.assertEqual(self.backend_starts(),[])
+        self.assertTrue(any('pg_dump' in ' '.join(call['args']) for call in self.calls()))
 
     def test_preflight_does_not_start_services_or_load_an_image(self):
         result = self.run_activation("check")

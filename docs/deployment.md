@@ -139,6 +139,8 @@ curl -f http://localhost:8080/readyz
 
 ## 5. Состояние, откат и дисковое место
 
+[Отдельные DB roles и двухэтапный bridge переход](database-roles.md): pre-deploy dump → одноразовый `migrate` service с отдельным DSN → backend schema-only startup. Мигратор не передаёт свои credentials приложению. Ошибка мигратора оставляет текущий backend нетронутым; после runtime switch mandatory guard запрещает запуск с superuser/DDL/member role. Не переключать DSN старого бинарника без bridge.
+
 Helper сериализует деплои через `flock`, не делает `down -v`, не удаляет images/volumes/backups. Backend read-only, non-root, без Linux capabilities; PostgreSQL и backend ограничены по 2 ГБ RAM каждый. PostgreSQL остаётся доступен при замене backend.
 
 При failed readiness:

@@ -52,6 +52,8 @@ if [[ ! -e "$config_dir/runtime.env" ]]; then
         printf '%s\n' 'POSTGRES_DB=canvas' 'POSTGRES_USER=canvas'
         printf 'POSTGRES_PASSWORD=%s\n' "$password"
         printf 'DATABASE_URL=postgres://canvas:%s@postgres:5432/canvas\n' "$password"
+        printf 'MIGRATION_DATABASE_URL=postgres://canvas:%s@postgres:5432/canvas\n' "$password"
+        printf '%s\n' 'DATABASE_MIGRATE_ON_START=false' 'DATABASE_REQUIRE_RUNTIME_ROLE=false'
         printf '%s\n' 'ALLOWED_ORIGINS=http://localhost:8080,http://127.0.0.1:8080' 'RUST_LOG=info'
     } > "$config_dir/runtime.env"
     chmod 0600 "$config_dir/runtime.env"

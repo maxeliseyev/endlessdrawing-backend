@@ -4,14 +4,14 @@ Backend общего бесконечного холста на **Rust + Axum + 
 
 Требования: [backend](docs/backend.md), [JSON-протокол v1](docs/protocol.md), [frontend](docs/frontend.md).
 
-Эксплуатация: [GitHub Actions → закрытый VPS-стенд](docs/deployment.md), [зашифрованные внешние бэкапы](docs/backups.md), [Telegram monitoring](docs/monitoring.md), [закрытый HTTPS/Caddy](docs/https.md), [gates публичного запуска](docs/publication.md). Модерация: [Admin API](docs/admin-api.md), [закрытый provisioning / Touch ID](docs/admin-operations.md), [совместная интеграция frontend/backend](docs/admin-integration.md).
+Эксплуатация: [GitHub Actions → закрытый VPS-стенд](docs/deployment.md), [зашифрованные внешние бэкапы](docs/backups.md), [Telegram monitoring](docs/monitoring.md), [least-privilege DB roles](docs/database-roles.md), [закрытый HTTPS/Caddy](docs/https.md), [gates публичного запуска](docs/publication.md). Модерация: [Admin API](docs/admin-api.md), [закрытый provisioning / Touch ID](docs/admin-operations.md), [совместная интеграция frontend/backend](docs/admin-integration.md).
 
 ## Текущий этап
 
 Реализованы основа и realtime-ядро, **не весь MVP**:
 
 - HTTP-сервер, конфигурация окружения, корректное завершение по Ctrl+C/SIGTERM;
-- пул PostgreSQL с таймаутами, автоматические embedded-миграции перед стартом HTTP;
+- пул PostgreSQL с таймаутами; embedded migrations локально, отдельный maintenance migrator и проверка readonly schema manifest/least-privilege role в production;
 - `GET /healthz` и `GET /readyz`, опциональная раздача сборки frontend;
 - таблица векторных штрихов, soft-delete поле и частичные GiST/owner индексы;
 - типизированная валидация точек и кисти, нормализация цвета, серверный bbox;
@@ -40,7 +40,7 @@ docker compose up -d --wait postgres
 cargo run
 ```
 
-Перед запуском HTTP применяются встроенные миграции из `migrations/`, включая таблицы модерации. Никакая SQLx CLI для этого не нужна. Миграции встроены в бинарник при компиляции; уже применённые файлы не редактировать — добавлять новые.
+В локальном режиме перед запуском HTTP применяются встроенные миграции из `migrations/`, включая таблицы модерации. В production — отдельный `canvas-migrate` с migration DSN, backend только проверяет manifest/ограниченный runtime role ([два этапа перехода](docs/database-roles.md)). SQLx CLI не нужна. Миграции встроены в бинарник при компиляции; уже применённые файлы не редактировать — добавлять новые.
 
 ```bash
 curl -i http://127.0.0.1:3000/healthz

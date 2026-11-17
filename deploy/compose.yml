@@ -55,6 +55,8 @@ services:
       ADMIN_RP_ID: ${ADMIN_RP_ID:-endlessdrawing.com}
       ADMIN_TOTP_KEY_FILE: ${ADMIN_TOTP_KEY_FILE:-}
       RUST_LOG: ${RUST_LOG:-info}
+      DATABASE_MIGRATE_ON_START: ${DATABASE_MIGRATE_ON_START:-false}
+      DATABASE_REQUIRE_RUNTIME_ROLE: ${DATABASE_REQUIRE_RUNTIME_ROLE:-false}
       DATABASE_MAX_CONNECTIONS: "10"
       DATABASE_ACQUIRE_TIMEOUT_MS: "5000"
       DATABASE_QUERY_TIMEOUT_MS: "5000"
@@ -64,6 +66,21 @@ services:
     logging:
       driver: json-file
       options: {max-size: "10m", max-file: "3"}
+
+  migrate:
+    profiles: [maintenance]
+    image: ${ENDLESSDRAWING_IMAGE:?Deployment helper must select an immutable release image}
+    entrypoint: ["/app/canvas-migrate"]
+    read_only: true
+    tmpfs: ["/tmp:size=16m,noexec,nosuid,nodev"]
+    security_opt: ["no-new-privileges:true"]
+    cap_drop: [ALL]
+    pids_limit: 64
+    mem_limit: 256m
+    environment:
+      DATABASE_URL: ${MIGRATION_DATABASE_URL:?Set separate migration URL in root-only runtime.env}
+      RUNTIME_DATABASE_ROLE: ${RUNTIME_DATABASE_ROLE:-}
+    networks: [private]
 
 networks:
   edge: {}

@@ -4,6 +4,8 @@
 
 Подготовлен `deploy/monitor.py`, systemd service/timer и backup OnFailure hook. **Реальный Telegram token агенту не передавать.** Пока владелец не прошёл configure в своём TTY и не подтвердил тестовое сообщение, delivery/monitoring gate не считается пройденным.
 
+**VPS acceptance 17.11.2026 13:39 UTC:** владелец завершил скрытый TTY configure и подтвердил получение теста. Проверены config metadata (`root:root 0600`, без symlink), timer enabled, service Result=success / ExecMainStatus=0, `issues: []`, daily-green отправлен. Дополнительный `drill` принят Telegram: две явные TEST-симуляции failure/recovery, без изменения сервисов и notification state. Token не передавался агенту и не читался в вывод. Это подтверждение Telegram, не независимый outage monitor.
+
 Это VPS-local watchdog, не независимая проверка полностью выключенного/отрезанного VPS. При падении хоста, сети или самого watchdog сообщения отправить некому. Внешний dead-man/uplink monitor на другом хосте или hosted service остаётся отдельным launch gate. Не обещать уведомление о полном падении машины по одному этому timer.
 
 ## Что проверяется

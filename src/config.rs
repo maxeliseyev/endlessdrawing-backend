@@ -15,6 +15,10 @@ pub struct Config {
     pub bind_addr: SocketAddr,
     /// Database settings, never log these.
     pub database: PgConnectOptions,
+    /// Development convenience only; production runs the separate maintenance migrator.
+    pub database_migrate_on_start: bool,
+    /// Fail closed if the production runtime role has DDL/cluster privileges or memberships.
+    pub database_require_runtime_role: bool,
     /// Maximum number of pooled PostgreSQL connections.
     pub database_max_connections: u32,
     /// Maximum wait for a pooled connection and startup connection establishment.
@@ -57,6 +61,14 @@ impl Config {
             .map_err(|_| ConfigError {
                 key: "DATABASE_URL",
             })?;
+        let database_migrate_on_start = setting(&lookup, "DATABASE_MIGRATE_ON_START", "true")?;
+        let database_require_runtime_role =
+            setting(&lookup, "DATABASE_REQUIRE_RUNTIME_ROLE", "false")?;
+        if database_require_runtime_role && database_migrate_on_start {
+            return Err(ConfigError {
+                key: "DATABASE_MIGRATE_ON_START",
+            });
+        }
         let bind_addr = setting(&lookup, "BIND_ADDR", "127.0.0.1:3000")?;
         let database_max_connections = positive(&lookup, "DATABASE_MAX_CONNECTIONS", 10_u32)?;
         let acquire_ms = positive(&lookup, "DATABASE_ACQUIRE_TIMEOUT_MS", 5000_u32)?;
@@ -91,6 +103,8 @@ impl Config {
         Ok(Self {
             bind_addr,
             database,
+            database_migrate_on_start,
+            database_require_runtime_role,
             database_max_connections,
             database_acquire_timeout: Duration::from_millis(u64::from(acquire_ms)),
             database_query_timeout: Duration::from_millis(u64::from(query_ms)),
@@ -284,6 +298,29 @@ mod tests {
         assert_eq!(config.database_max_connections, 10);
         assert_eq!(config.stroke_limits.max_points(), 2000);
         assert!(config.static_dir.is_none());
+    }
+
+    #[test]
+    fn restricted_runtime_requires_read_only_startup_and_strict_boolean_settings() {
+        let local = config_with(&[]).unwrap();
+        assert!(local.database_migrate_on_start);
+        assert!(!local.database_require_runtime_role);
+        let production = config_with(&[
+            ("DATABASE_MIGRATE_ON_START", "false"),
+            ("DATABASE_REQUIRE_RUNTIME_ROLE", "true"),
+        ])
+        .unwrap();
+        assert!(!production.database_migrate_on_start);
+        assert!(production.database_require_runtime_role);
+        assert_eq!(
+            config_with(&[("DATABASE_REQUIRE_RUNTIME_ROLE", "true")])
+                .err()
+                .unwrap()
+                .key,
+            "DATABASE_MIGRATE_ON_START"
+        );
+        assert!(config_with(&[("DATABASE_MIGRATE_ON_START", "yes")]).is_err());
+        assert!(config_with(&[("DATABASE_REQUIRE_RUNTIME_ROLE", "1")]).is_err());
     }
 
     #[test]

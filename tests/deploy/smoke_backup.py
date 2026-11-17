@@ -20,6 +20,10 @@ DRILL = r'''
 set -euo pipefail
 umask 077
 root=$1
+[[ $root == /fixture ]] || { echo 'Disposable fixture root required' >&2; exit 1; }
+# docker cp may preserve the host UID; the production helper correctly demands root ownership.
+chown root:root "$root/config/runtime.env"
+chmod 0600 "$root/config/runtime.env"
 # Keep test key/config on the container filesystem: Docker Desktop bind mounts remap UIDs.
 work=$(mktemp -d /tmp/endlessdrawing-backup-drill-XXXXXXXX)
 mkdir -m 0700 "$work/received"
@@ -74,7 +78,18 @@ leftovers=$(compose exec -T postgres psql -X -At -U canvas -d canvas -c "SELECT 
 # Source data remains unchanged: neither of the restore drills targeted the application DB.
 count=$(compose exec -T postgres psql -X -At -U canvas -d canvas -c "SELECT count(*) FROM strokes")
 [[ $count == 1 ]]
-printf '%s\n' 'Real backup drill passed: dump, disposable restore, age round-trip, checksums, independent readback; no off-site success claimed.'
+# Real ownership transfer, migration SCRAM login and app TCP login; no fixture secrets logged.
+python3 /workspace/deploy/db-roles.py prepare
+compose run --rm --no-deps migrate
+python3 /workspace/deploy/db-roles.py switch
+compose up -d --no-deps --force-recreate --wait --wait-timeout 120 backend
+if compose exec -T backend /app/canvas-migrate > "$work/runtime-migration-denied.log" 2>&1; then
+    echo 'ERROR: runtime unexpectedly migrated schema' >&2; exit 1
+fi
+python3 /workspace/deploy/db-roles.py status
+# Maintenance CREATEDB/restore still works after app loses cluster/DDL privileges.
+python3 /workspace/deploy/backup-storagebox.py --config "$work/backup.env" --local-only > "$work/restricted-backup.log"
+printf '%s\n' 'Real backup/role drill passed: dump/restore, age round-trip, checksums/readback, isolated migrator, restricted runtime, denied runtime DDL and maintenance restore; no off-site success claimed.'
 '''
 
 
@@ -110,18 +125,24 @@ def main():
         (config / "runtime.env").write_text(
             "POSTGRES_DB=canvas\nPOSTGRES_USER=canvas\n" + f"POSTGRES_PASSWORD={password}\n" +
             f"DATABASE_URL=postgres://canvas:{password}@postgres:5432/canvas\n" +
+            f"MIGRATION_DATABASE_URL=postgres://canvas:{password}@postgres:5432/canvas\n" +
             "ALLOWED_ORIGINS=http://localhost:8080\nADMIN_ENABLED=false\n" + f"ADMIN_SECRETS_DIR={secret_dir}\n"
         )
         (config / "runtime.env").chmod(0o600)
         env = dict(os.environ)
         for key in ("POSTGRES_DB", "POSTGRES_USER", "POSTGRES_PASSWORD", "DATABASE_URL", "ALLOWED_ORIGINS", "ADMIN_ENABLED", "ADMIN_ORIGIN", "ADMIN_RP_ID"):
             env.pop(key, None)
+        env.pop('MIGRATION_DATABASE_URL', None)
+        env['DATABASE_MIGRATE_ON_START'] = 'false'
+        env['DATABASE_REQUIRE_RUNTIME_ROLE'] = 'false'
         env['ADMIN_SECRETS_DIR'] = str(secret_dir)
         env['ADMIN_TOTP_KEY_FILE'] = ''
         env["ENDLESSDRAWING_IMAGE"] = image
         command = ["docker", "compose", "-p", project, "--env-file", str(config / "runtime.env"), "-f", str(app / "compose.yml")]
         try:
-            subprocess.run(command + ["up", "-d", "--wait", "--wait-timeout", "120"], env=env, check=True)
+            subprocess.run(command + ["up", "-d", "--wait", "--wait-timeout", "120", "postgres"], env=env, check=True)
+            subprocess.run(command + ["run", "--rm", "--no-deps", "migrate"], env=env, check=True)
+            subprocess.run(command + ["up", "-d", "--no-deps", "--wait", "--wait-timeout", "120", "backend"], env=env, check=True)
             seed = """INSERT INTO strokes(id,owner_digest,points,brush,width,color,opacity,bounds)
             VALUES(gen_random_uuid(),decode(repeat('00',32),'hex'),'[[0,0],[1,1]]','round',4,'#123456',1,box(point(-3,-3),point(4,4)));
             INSERT INTO admin_accounts(id,login,password_hash,enabled) VALUES(gen_random_uuid(),'backup-fixture','disabled-test-fixture-no-login',false);"""
