@@ -27,9 +27,12 @@ def response(port, spoof=False):
 def main():
     for allow_external in (False, True):
         name = "endlessdrawing-caddy-test-" + uuid.uuid4().hex[:12]
-        command = ["docker", "run", "-d", "--name", name, "-p", "127.0.0.1::8080",
+        # Run unprivileged, as on the VPS. No access to the root-only secret directory.
+        command = ["docker", "run", "-d", "--name", name, "--user", "65534:65534",
+                   "--tmpfs", "/data:uid=65534,gid=65534,mode=0700", "--tmpfs", "/config:uid=65534,gid=65534,mode=0700",
+                   "-p", "127.0.0.1::8080",
                    "-v", f"{ROOT / 'deploy/caddy/Caddyfile'}:/etc/caddy/Caddyfile:ro",
-                   "-v", f"{ROOT / 'deploy/caddy/access.private.caddy'}:/etc/endlessdrawing/caddy/access.caddy:ro",
+                   "-v", f"{ROOT / 'deploy/caddy/access.private.caddy'}:/etc/caddy/endlessdrawing/access.caddy:ro",
                    "-e", "ENDLESSDRAWING_SITE=http://localhost:8080", "-e", "ENDLESSDRAWING_UPSTREAM=127.0.0.1:9"]
         if allow_external:
             # Test-only loopback publishing. No real application is reachable behind port 9.

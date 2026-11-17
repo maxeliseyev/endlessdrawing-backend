@@ -1,14 +1,15 @@
 # HOST Caddy, not the backend container. Prepared only; do not install/open ports blindly.
 # Existing multi-site Caddy configurations must be merged, never overwritten.
 {
-    admin 127.0.0.1:2019
+	admin 127.0.0.1:2019
 }
 
 {$ENDLESSDRAWING_SITE:endlessdrawing.com} {
-    # This guard is mandatory until the explicit public-launch review.
-    import /etc/endlessdrawing/caddy/access.caddy
-    encode zstd gzip
-    reverse_proxy {$ENDLESSDRAWING_UPSTREAM:127.0.0.1:8080}
-    # No access log: never collect Cookie/Authorization or WebAuthn bodies.
-    # No HSTS preload/includeSubDomains until the final HTTPS setup is accepted.
+	# This guard is mandatory until the explicit public-launch review.
+	# Public snippet is outside /etc/endlessdrawing (0700 server secrets).
+	import /etc/caddy/endlessdrawing/access.caddy
+	encode zstd gzip
+	reverse_proxy {$ENDLESSDRAWING_UPSTREAM:127.0.0.1:8080}
+	# No access log: never collect Cookie/Authorization or WebAuthn bodies.
+	# No HSTS preload/includeSubDomains until the final HTTPS setup is accepted.
 }
