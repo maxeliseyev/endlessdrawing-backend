@@ -8,6 +8,8 @@
 
 Подход согласован с работающим `construct-server/ops/backup.sh`: шифрование **до** отправки, приватный age identity вне VPS, SSH port 23, SHA-256 и retention 7 daily / 4 weekly. Сам construct-скрипт, его каталог, credentials и cron не изменяются. Redis у Endless Drawing нет.
 
+После закрытой выкладки backend `ff832e5` / frontend `5cc6de7` выполнен ещё один полный настоящий off-site round-trip: snapshot **`20261117T094648Z-a1354607`**, operator age decrypt на Mac, PostgreSQL 17 restore, migrations **1/2/3**. В нём 9 soft-deleted test strokes после трёхбраузерной staging-проверки, 0 accounts; контейнер/plaintext удалены, nonsensitive proof обновлён на VPS и у оператора. Это также проверка backup новой schema 0003, не только исходной пустой БД.
+
 ## Изоляция от construct
 
 В Hetzner создать НОВЫЙ Storage Box subaccount:

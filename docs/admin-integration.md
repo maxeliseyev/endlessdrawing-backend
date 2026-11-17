@@ -1,6 +1,8 @@
 # Совместная проверка и интегрированный staging-релиз
 
-## Новая проверенная пара для закрытой выкладки (17.11.2026)
+## Новая проверенная и выложенная закрытая пара (17.11.2026)
+
+[Actions run 44056125897](https://github.com/maxeliseyev/endlessdrawing-backend/actions/runs/44056125897) success: backend `ff832e536a8c683481e9740870759c3b1bbd3a54`, frontend `5cc6de756db5ca50f4cc8d745507ae3b85aecd56`, labels/migrations 1/2/3 verified. Canonical admin API enabled: options 200 / session 401 без входа, accounts 0. Дополнительно public integration suite прошёл против **настоящего staging HTTPS/WSS** во всех трёх браузерах: 3/3. Созданы и owner-undo удалены 9 test strokes в случайных удалённых областях; чужие данные не удалялись. Post-deploy off-site decrypt/restore на Mac подтвердил новую схему. Настоящий Touch ID/provisioning остаётся действием владельца.
 
 Выбран merged frontend `5cc6de756db5ca50f4cc8d745507ae3b85aecd56` (PR #1: public WS, zoom, touch), требующий backend migration 0003 (`1473251`, уже в main). Проверен в отдельном detached worktree, основной frontend checkout не менялся.
 
@@ -9,7 +11,7 @@
 - **Real public UI ↔ Axum ↔ PostgreSQL**, без mocks: **3/3 browsers** passed, два посетителя, ownership, reload/undo, chisel/spray и поздний snapshot. Helper `tests/deploy/smoke_public.py` создаёт только новую случайную DB, использует loopback/local Docker, удаляет собственную DB после завершения; source DB не используется и не удаляется.
 - Реальный admin HTTPS/WebAuthn/API/WS/DB test повторён с этим frontend: passed. Аутентификаторы виртуальные, настоящий Touch ID остаётся ручным gate.
 - **37 deployment safety tests** passed. Deploy workflow теперь запускает public 3-browser gate **и** admin HTTPS gate до image build/SSH.
-- Production HTTPS уже доверенный; Caddy разрешает только подтверждённый operator `/32` и loopback. Неавторизованный peer по-прежнему 403 даже с spoofed forwarded IP. Admin включается только штатным manual Actions deploy; аккаунт/секреты агент не создаёт.
+- Production HTTPS уже доверенный; Caddy разрешает только подтверждённый operator `/32` и loopback. Неавторизованный peer по-прежнему 403 даже с spoofed forwarded IP. Admin включён штатным manual Actions deploy; аккаунт/секреты агент не создаёт.
 
 ## Исторический релиз admin (13f3ab1)
 
@@ -49,12 +51,12 @@ DATABASE_URL=postgres://canvas:canvas_dev_only@127.0.0.1:55432/canvas \
 
 Manual Actions `Deploy staging` до image build/SSH выполняет admin test и real public UI test с зафиксированным `frontend_ref`, PostgreSQL 17 и Chromium/Firefox/WebKit. Теперь требуется frontend с `test:integration` и public WS (5cc6de7 либо reviewed successor). Затем собирает linux/amd64 образ, делает container smoke и штатный backup/readiness deploy. Release manifest и image labels фиксируют оба SHA. Автоматического публичного deploy с push main нет.
 
-Актуальные Compose/helper установлены на VPS штатным bootstrap; существующие runtime.env, DB credentials и volume сохранены. Вход администратора остаётся выключенным (`ADMIN_ENABLED=false` по умолчанию). HTML `/admin/` можно открыть для проверки загрузки/сообщения «администрирование не настроено», но все admin API, включая enrollment/login/session/hide, при выключенном admin возвращают 503.
+Для исторического релиза Compose/helper были установлены штатным bootstrap; DB credentials и volume сохранялись. В нём вход администратора оставался выключенным (`ADMIN_ENABLED=false` по умолчанию). Текущий enabled статус см. в начале документа. HTML `/admin/` можно открыть для проверки загрузки/сообщения «администрирование не настроено», но все admin API, включая enrollment/login/session/hide, при выключенном admin возвращают 503.
 
 ## Ещё не пройдено
 
 - Настоящий Touch ID / резервный passkey provider на доверенном окончательном HTTPS origin; закрытый пользовательский SSH provisioning без захвата capability агентом.
-- Закрытая VPS-выкладка выбранной новой пары и browser acceptance по настоящему HTTPS; публичный transport/кисти уже проверены локально, но это не подтверждение реальных iPhone/iPad/нагрузки.
+- Настоящие iPhone/iPad/Apple Pencil и нагрузка. Закрытая VPS-выкладка и public browser suite по настоящему HTTPS уже пройдены, но не заменяют физические устройства.
 - Замечания dependency audit, DB roles, внешние alerts/provider deletion protection. Доверенный HTTPS/private gate и настоящие off-site decrypt/restore уже подтверждены отдельно. См. [admin-operations.md](admin-operations.md), [security-dependencies.md](security-dependencies.md).
 
 Закрытая выкладка новой сборки не разрешает публичный запуск продукта и не доказывает сохранение штрихов локального drawing-прототипа.

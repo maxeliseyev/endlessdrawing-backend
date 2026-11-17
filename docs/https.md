@@ -2,7 +2,7 @@
 
 ## Текущее состояние
 
-На VPS проверены: backend `13f3ab1`, frontend `623c5a6`, `/readyz` 200, `/admin/` 200, admin session API 503 (намеренно выключен). Caddy **2.11.9 включён и работает** от пользователя caddy; `caddy-api.service` остаётся masked. 17.11.2026 оператор переключил A в DNS only → `212.147.244.161`; AAAA/CAA ответов нет. Получен доверенный Let's Encrypt сертификат, TLS 1.3 проверен обычным системным trust store, без `-k`/ignore-certificate-errors. HTTP → 308 HTTPS. Caddy разрешает только loopback и явно подтверждённый operator `/32`; остальные peers на HTTPS `/`, `/admin/`, `/api/admin/session`, `/readyz`, `/ws` получают **403 Private staging**, в том числе при spoofed forwarded IP. Operator IP получает HTML 200; тестовый неразрешённый peer через public address получил 403 даже с поддельным разрешённым X-Forwarded-For. Через loopback HTTPS readiness 200, admin HTML 200, admin API 503 (disabled). Backend по-прежнему только `127.0.0.1:8080`, Caddy admin endpoint — `127.0.0.1:2019`; PostgreSQL не опубликован. UFW уже разрешал 80/tcp, 443/tcp+udp и SSH; эти правила не менялись.
+На VPS через [Actions 44056125897](https://github.com/maxeliseyev/endlessdrawing-backend/actions/runs/44056125897) выложены backend `ff832e5` и frontend `5cc6de7`; labels проверены. `/readyz` 200, `/admin/` 200, admin login/options 200 (`passkey_uv`), admin session 401 без входа — API теперь **включён**, но аккаунт агентом не создавался. Caddy **2.11.9 включён и работает** от пользователя caddy; `caddy-api.service` остаётся masked. 17.11.2026 оператор переключил A в DNS only → `212.147.244.161`; AAAA/CAA ответов нет. Получен доверенный Let's Encrypt сертификат, TLS 1.3 проверен обычным системным trust store, без `-k`/ignore-certificate-errors. HTTP → 308 HTTPS. Caddy разрешает только loopback и явно подтверждённый operator `/32`; остальные peers на HTTPS `/`, `/admin/`, `/api/admin/session`, `/readyz`, `/ws` получают **403 Private staging**, в том числе при spoofed forwarded IP. Operator IP получает HTML 200; тестовый неразрешённый peer через public address получил 403 даже с поддельным разрешённым X-Forwarded-For. Через loopback HTTPS readiness 200, admin HTML 200; без сессии admin API закрыт (401). Backend по-прежнему только `127.0.0.1:8080`, Caddy admin endpoint — `127.0.0.1:2019`; PostgreSQL не опубликован. UFW уже разрешал 80/tcp, 443/tcp+udp и SSH; эти правила не менялись.
 
 `deploy/caddy/Caddyfile`, private access snippet и systemd drop-in установлены; разрешены **только loopback и явно подтверждённый оператором public IPv4 `/32`** (actual IP только в серверном env, не в template). Не подставлять IP proxy/агента или весь Cloudflare. Конфигурация успешно проверена native `caddy validate` от пользователя **caddy**, который по-прежнему не может прочитать server `runtime.env`. `/etc/endlessdrawing` остался `0700`, несекретный snippet размещён отдельно в `/etc/caddy/endlessdrawing/access.caddy`. `install-operations.sh` сам по-прежнему кладёт только `.prepared` файлы и не включает Caddy.
 
@@ -39,7 +39,9 @@ Caddy автоматически получает/продлевает серт�
 
 ## Настоящий admin / Touch ID
 
-Только после доверенного HTTPS, без browser ignore-certificate-errors и `curl -k`:
+Canonical flags ниже уже применены через ручной Actions deploy; DB credentials сохранены. Аккаунт/passkeys создаёт только владелец интерактивно по [runbook](admin-operations.md), без захвата реальных password/enrollment capability агентом. Настоящий Touch ID и независимый резерв ещё не приняты.
+
+Только доверенный HTTPS, без browser ignore-certificate-errors и `curl -k`:
 
 ```dotenv
 ADMIN_ENABLED=true

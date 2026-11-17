@@ -2,21 +2,21 @@
 
 ## Статус и границы
 
-Workflow подготовлен; первая попытка Actions остановилась до активации из-за отсутствующего helper. **Серверный bootstrap теперь выполнен**, Docker CE восстановлен/запущен, `/usr/local/sbin/endlessdrawing-activate check` проходит. После этого владелец подтвердил доступ к приложению через SSH-туннель. Это не проверка shared persistence или новой модерации; admin-изменения ещё не выкладывались. SSH/firewall и публичный reverse proxy не менялись.
+Текущий закрытый release: [Actions 44056125897](https://github.com/maxeliseyev/endlessdrawing-backend/actions/runs/44056125897) success, backend `ff832e536a8c683481e9740870759c3b1bbd3a54` + frontend `5cc6de756db5ca50f4cc8d745507ae3b85aecd56`. Labels и migrations 1/2/3 подтверждены; admin API включён только на конечном HTTPS origin, аккаунт создаёт владелец отдельно. Caddy 2.11.9 с доверенным Let's Encrypt TLS разрешает только явно подтверждённый operator `/32` и loopback. Это **не публичный запуск**. Подробные gates — [publication](publication.md), [HTTPS](https.md), [backup/restore](backups.md).
 
 VPS: `subwhale@212.147.244.161`, Linux amd64, Ubuntu 26.04.1, 2 vCPU, 8 ГБ RAM, диск 40 ГБ (на момент проверки свободно около 35 ГБ). Для начального закрытого стенда достаточно; диск и размер БД/бэкапов контролировать.
 
-Frontend: `https://github.com/maxeliseyev/endlessdrawing-frontend`, локально `../endless-drawing-frontend`. **Публичный холст пока локальный прототип; отдельный admin UI и его read-only WS реализованы**. Совместный HTTPS/WebAuthn/API/WS/DB тест с виртуальными UV authenticators прошёл; настоящие Touch ID и production HTTPS ещё не приняты. Сборка/выкладка не делает публичный drawing UI общим сохраняемым холстом. Интеграция с backend и модерация — отдельные обязательные этапы.
+Frontend: `https://github.com/maxeliseyev/endlessdrawing-frontend`, локально `../endless-drawing-frontend`. Выбран merged PR #1 (`5cc6de7`): **общий публичный WS-холст** и отдельный admin UI. Реальные public tests прошли в Chromium/Firefox/WebKit как локально, так и по настоящему staging HTTPS; реальный admin HTTPS/API/WS/DB gate использует виртуальные UV authenticators. Настоящий Touch ID и независимый резерв ещё проверяет владелец. Основной frontend checkout не переключался: проверки нового commit выполнялись в отдельном detached worktree.
 
-Начальный стенд намеренно закрыт: приложение слушает только `127.0.0.1:8080` на VPS, PostgreSQL вообще без published ports. Публичный proxy/80/443 пока не настраивается. Backend подключён к bridge `edge` для loopback-publishing и к внутренней `private` для БД; PostgreSQL подключён только к `private`. Требования до публичного запуска — [модерация](moderation.md), TLS и внешние проверенные бэкапы.
+Стенд намеренно закрыт: backend слушает только `127.0.0.1:8080` на VPS, PostgreSQL вообще без published ports. Caddy принимает 80/443, но неразрешённые peers получают 403 даже со spoofed forwarded headers. Backend подключён к bridge `edge` для loopback-publishing и к внутренней `private` для БД; PostgreSQL подключён только к `private`. Требования до публичного запуска — [модерация](moderation.md), TLS и внешние проверенные бэкапы.
 
 ## 1. Путь релиза
 
 Workflow `.github/workflows/deploy.yml` в backend-репозитории, Actions → **Deploy staging** → Run workflow:
 
 1. Переиспользовать Backend CI: shell deployment tests, Rust fmt/clippy, все PostgreSQL/WS-тесты.
-2. Checkout backend выбранного запуска и отдельного frontend на `frontend_ref`; предпочтительно проверенный commit SHA, `main` допустим для прототипа.
-3. Node 22: `npm ci`, check, unit tests и build. Затем PostgreSQL 17 + Playwright Chromium: реальный HTTPS frontend/backend enrollment/login/hide/logout тест до сборки/SSH. Полный frontend mock suite Firefox/WebKit отдельно, не вместо совместного gate.
+2. Checkout backend выбранного запуска и отдельного frontend на `frontend_ref`; для release использовать полный проверенный commit SHA (теперь требуется public WS и `test:integration`, например `5cc6de7`).
+3. Node 22: `npm ci`, check, unit tests и build. Затем PostgreSQL 17 + Playwright: real admin HTTPS enrollment/login/hide/logout и public UI/WS тест в Chromium/Firefox/WebKit до сборки/SSH. Public helper создаёт/удаляет только собственную новую случайную DB. Mock suite отдельно, не вместо совместных gates.
 4. Зафиксировать оба SHA в `release.json`, выбрать тег `endlessdrawing-app:<backend_sha>-<run_id>-<run_attempt>`, не изменяемый `latest`.
 5. Собрать **один linux/amd64 Docker-образ** с revision labels: Rust binary + frontend `dist/`. Rust компилируется на Actions runner, не на VPS.
 6. Загрузить образ на runner и проверить с одноразовой PostgreSQL через production Compose: HTML/assets, probes, non-root/read-only и отсутствие опубликованного DB-порта. Это smoke-test, не браузерная E2E-интеграция общего мира.
@@ -164,10 +164,10 @@ Pre-deploy dump создаётся до запуска миграций. `pg_res
 
 ## 6. До публичного endlessdrawing.com
 
-- Подключить frontend к реальному WS и пройти двухбраузерные E2E, не выдавать локальный прототип за сохраняемый мир.
-- Реализовать и проверить [закрытую модерацию с MFA](moderation.md); `/admin/` не публичная продуктовая страница.
-- Подтвердить DNS/прокси домена: сейчас публичный DNS не возвращает VPS IP напрямую; если используется Cloudflare, проверить origin, WebSocket и режим TLS, не делать вывод по одному A-record.
-- Установить Caddy/reverse proxy, HTTPS/WSS на одном origin, точный HTTPS `ALLOWED_ORIGINS`, закрыть обход proxy и доверять forwarded IP только от него.
+- Public WS и три браузера по настоящему HTTPS уже проверены; физические iPhone/iPad и нагрузка остаются отдельной приёмкой.
+- Владелец должен принять настоящие Touch ID/резерв и [модерацию с MFA](moderation.md); `/admin/` не публичная продуктовая страница.
+- DNS сейчас only → VPS, доверенный HTTPS/Caddy/private gate настроены; Cloudflare proxy не включать обратно без review Origin, WebSocket, Full (strict), caching и trusted client IP.
+- Exact HTTPS `ALLOWED_ORIGINS` уже применён; backend не опубликован напрямую. Trusted forwarded IP/rate limits перед снятием gate ещё проверить.
 - Ограничить подключения/логин/модерацию по IP, защитить SSH, проверить firewall. Не отключать существующий доступ SSH при автоматизации.
 - Перейти на отдельные DB roles без superuser у приложения; production migrations/backup выполнять закрытым операционным путём.
 - Настроить ежедневные **внешние** зашифрованные бэкапы и расписание тестового восстановления в изолированную БД, мониторинг диска/памяти/ошибок. Копии на том же VPS недостаточны.
@@ -180,7 +180,7 @@ Pre-deploy dump создаётся до запуска миграций. `pg_res
 - 63 стандартных backend-теста с PostgreSQL (16 admin) и отдельная реальная Chromium HTTPS frontend/API/WS/DB интеграция; frontend TypeScript, 97 unit-тестов и production build; полный повторный browser suite — 127 passed / 2 CDP-only skip ([детали](admin-integration.md));
 - фактическая сборка native ARM64 Docker-образа с provisioning CLI и smoke-test с одноразовым PostgreSQL: статика/assets, probes, non-root/read-only, admin-disabled default, отказ CLI без TTY, отсутствие published DB-порта, `pg_dump` и читаемость архива.
 
-Bootstrap на VPS и серверный preflight проверены после восстановления Docker CE; доступ через SSH-туннель затем подтверждён владельцем. Новая модерация на VPS не включалась, полноценное восстановление backup и browser E2E общего мира/модерации пока не подтверждены. Frontend admin реализован; production HTTPS/Touch ID/provisioning ещё не приняты. AMD64 container smoke-test включён в workflow как gate до SSH.
+После исторической проверки выше пройдены новые gates: 37 deployment safety tests, 127 frontend unit, 169 browser mock tests / 2 skips, real public 3-browser UI/WS/PostgreSQL + admin HTTPS gate с frontend `5cc6de7`. Actions 44056125897 успешно выложил новую пару и включил admin API; public suite повторён по настоящему HTTPS (3/3). Post-deploy off-site snapshot скачан/расшифрован операторским identity на Mac и восстановлен в изолированный PostgreSQL: migrations 1/2/3, 9 test tombstones, 0 accounts. Настоящие Touch ID/provisioning/moderation остаются ручной приёмкой, никаких real admin secrets агент не создавал.
 
 Для повторения локального container smoke-test (не деплой):
 

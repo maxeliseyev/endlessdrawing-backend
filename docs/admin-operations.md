@@ -1,6 +1,6 @@
 # Администратор: passkeys / Touch ID и закрытый provisioning
 
-Статус: backend и браузерный `/admin/` прошли [совместную HTTPS/API/WS/DB проверку](admin-integration.md) с виртуальными Chromium UV аутентификаторами. Настоящий Touch ID и production HTTPS ещё требуют приёмки. Это инструкция для будущего включения, не сообщение об активации на VPS. Wire-контракт: [admin-api.md](admin-api.md).
+Статус: backend и `/admin/` прошли [совместную HTTPS/API/WS/DB проверку](admin-integration.md), повторённую с frontend `5cc6de7`, с виртуальными Chromium UV аутентификаторами. Production HTTPS уже доверенный, Caddy допускает только явно подтверждённый operator `/32` и loopback. Настоящий Touch ID, два независимых credentials и аккаунт требуют закрытой приёмки владельцем. Актуальный релиз/API status — в [publication checklist](publication.md). Wire-контракт: [admin-api.md](admin-api.md).
 
 ## До включения
 
