@@ -1,0 +1,14 @@
+# Installed at /etc/fail2ban/jail.local on the application VPS.
+# Extends the Debian default sshd jail (systemd backend, nftables banaction)
+# and adds a recidive jail for repeat offenders. SSH key auth is unaffected.
+[DEFAULT]
+bantime = 3600
+findtime = 600
+maxretry = 5
+
+[recidive]
+enabled = true
+logpath = /var/log/fail2ban.log
+bantime = 604800
+findtime = 86400
+maxretry = 3
