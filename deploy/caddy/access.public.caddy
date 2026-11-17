@@ -1,0 +1,3 @@
+# Public launch: the shared canvas is open to all peers, no IP allowlist.
+# Backend remains on 127.0.0.1:8080 and PostgreSQL is not published. Admin API
+# stays password + passkey/TOTP gated and rate-limited by trusted proxy client IP.

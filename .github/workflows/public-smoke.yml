@@ -1,0 +1,25 @@
+name: Public smoke
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Verify the public site is reachable and admin fails closed without a session
+        run: |
+          set -euo pipefail
+          code=$(curl -s -o /tmp/readyz -w '%{http_code}' --max-time 20 https://endlessdrawing.com/readyz)
+          echo "readyz=$code $(cat /tmp/readyz)"
+          [[ $code == 200 ]]
+          grep -q '"status":"ready"' /tmp/readyz
+          code=$(curl -s -o /dev/null -w '%{http_code}' --max-time 20 https://endlessdrawing.com/admin/)
+          echo "admin=$code"
+          [[ $code == 200 ]]
+          code=$(curl -s -o /dev/null -w '%{http_code}' --max-time 20 https://endlessdrawing.com/api/admin/session)
+          echo "admin_session=$code"
+          [[ $code == 401 ]]
