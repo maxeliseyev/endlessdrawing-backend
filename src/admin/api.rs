@@ -54,6 +54,11 @@ pub(super) fn router(service: Option<AdminService>, static_dir: Option<PathBuf>)
         .route("/api/admin/login/options", get(options))
         .route("/api/admin/login", post(login))
         .route("/api/admin/login/verify", post(verify))
+        .route("/api/admin/login/totp", post(totp_login))
+        .route("/api/admin/totp/status", get(totp_status))
+        .route("/api/admin/totp/setup/start", post(totp_start))
+        .route("/api/admin/totp/setup/confirm", post(totp_confirm))
+        .route("/api/admin/totp/disable", post(totp_disable))
         .route("/api/admin/enrollment/start", post(enroll_start))
         .route("/api/admin/enrollment/finish", post(enroll_finish))
         .route("/api/admin/session", get(session))
@@ -185,6 +190,54 @@ fn cookie_response<T: Serialize>(
             .map_err(|_| AdminError::Unavailable)?,
     );
     Ok(response)
+}
+
+async fn totp_login(
+    State(state): State<Routes>,
+    Extension(peer): Extension<Peer>,
+    headers: HeaderMap,
+    input: Result<Json<super::totp::LoginInput>, JsonRejection>,
+) -> Result<Response, AdminError> {
+    let service = enabled(&state)?;
+    let result = service.totp_login(&headers, body(input)?, peer.0).await;
+    if matches!(result, Err(AdminError::Unauthorized)) {
+        service.audit_failure("login_totp_failed").await?;
+    }
+    let (reply, token) = result?;
+    cookie_response(reply, SESSION_COOKIE, &token, 8 * 60 * 60)
+}
+async fn totp_status(
+    State(state): State<Routes>,
+    headers: HeaderMap,
+) -> Result<impl IntoResponse, AdminError> {
+    Ok(Json(enabled(&state)?.totp_status(&headers).await?))
+}
+async fn totp_start(
+    State(state): State<Routes>,
+    headers: HeaderMap,
+    input: Result<Json<Empty>, JsonRejection>,
+) -> Result<impl IntoResponse, AdminError> {
+    body(input)?;
+    Ok(Json(enabled(&state)?.totp_start(&headers).await?))
+}
+async fn totp_confirm(
+    State(state): State<Routes>,
+    headers: HeaderMap,
+    input: Result<Json<super::totp::CodeInput>, JsonRejection>,
+) -> Result<StatusCode, AdminError> {
+    enabled(&state)?
+        .totp_confirm(&headers, body(input)?)
+        .await?;
+    Ok(StatusCode::NO_CONTENT)
+}
+async fn totp_disable(
+    State(state): State<Routes>,
+    headers: HeaderMap,
+    input: Result<Json<Empty>, JsonRejection>,
+) -> Result<StatusCode, AdminError> {
+    body(input)?;
+    enabled(&state)?.totp_disable(&headers).await?;
+    Ok(StatusCode::NO_CONTENT)
 }
 
 async fn index(State(state): State<Routes>) -> Result<Response, AdminError> {

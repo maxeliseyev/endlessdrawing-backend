@@ -11,6 +11,10 @@ browser-integration = []
 
 [dependencies]
 anyhow = "1"
+aes-gcm = { version = "0.11", features = ["zeroize"] }
+data-encoding = "2"
+sha1 = "0.10"
+subtle = "2"
 argon2 = "0.5"
 chrono = { version = "0.4", features = ["serde"] }
 hmac = "0.12"

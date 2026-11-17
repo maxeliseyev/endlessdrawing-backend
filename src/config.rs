@@ -76,13 +76,14 @@ impl Config {
                     .filter(|value| !value.is_empty())
                     .ok_or(ConfigError { key })
             };
-            Some(
-                AdminConfig::new(&required("ADMIN_ORIGIN")?, required("ADMIN_RP_ID")?).map_err(
-                    |_| ConfigError {
-                        key: "ADMIN_CONFIG",
-                    },
-                )?,
-            )
+            let mut config = AdminConfig::new(&required("ADMIN_ORIGIN")?, required("ADMIN_RP_ID")?)
+                .map_err(|_| ConfigError {
+                    key: "ADMIN_CONFIG",
+                })?;
+            if let Some(path) = lookup("ADMIN_TOTP_KEY_FILE").filter(|value| !value.is_empty()) {
+                config = config.with_totp_key_file(path.into());
+            }
+            Some(config)
         } else {
             None
         };

@@ -9,4 +9,5 @@ __pycache__/
 /deploy/runtime.env
 /deploy/backup.env
 /deploy/backup/
+/deploy/admin-secrets/
 /deploy/caddy/caddy.env

@@ -58,7 +58,7 @@ pub async fn create(
 }
 
 /// Closed recovery: changes password and revokes ALL old factors, sessions and ceremonies.
-/// Re-enables the account but requires two new credential registrations before login.
+/// Re-enables the account but requires a new UV passkey before login; TOTP is revoked too.
 ///
 /// # Errors
 /// Rejects unknown account, invalid input and database/crypto failures.
@@ -117,6 +117,10 @@ async fn revoke(connection: &mut sqlx::PgConnection, account: Uuid) -> Result<()
     sqlx::query("UPDATE admin_sessions SET revoked_at = clock_timestamp() WHERE account_id = $1 AND revoked_at IS NULL")
         .bind(account).execute(&mut *connection).await?;
     sqlx::query("DELETE FROM admin_preauth WHERE account_id = $1")
+        .bind(account)
+        .execute(&mut *connection)
+        .await?;
+    sqlx::query("DELETE FROM admin_totp WHERE account_id = $1")
         .bind(account)
         .execute(&mut *connection)
         .await?;

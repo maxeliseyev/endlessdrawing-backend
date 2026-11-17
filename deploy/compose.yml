@@ -38,6 +38,13 @@ services:
     stop_grace_period: 40s
     ports:
       - "127.0.0.1:8080:3000"
+    volumes:
+      - type: bind
+        source: ${ADMIN_SECRETS_DIR:-/opt/endlessdrawing/admin-secrets}
+        target: /run/admin-secrets
+        read_only: true
+        bind:
+          create_host_path: false
     environment:
       DATABASE_URL: ${DATABASE_URL:?Set DATABASE_URL in runtime.env}
       ALLOWED_ORIGINS: ${ALLOWED_ORIGINS:?Set ALLOWED_ORIGINS in runtime.env}
@@ -46,6 +53,7 @@ services:
       ADMIN_ENABLED: ${ADMIN_ENABLED:-false}
       ADMIN_ORIGIN: ${ADMIN_ORIGIN:-https://endlessdrawing.com}
       ADMIN_RP_ID: ${ADMIN_RP_ID:-endlessdrawing.com}
+      ADMIN_TOTP_KEY_FILE: ${ADMIN_TOTP_KEY_FILE:-}
       RUST_LOG: ${RUST_LOG:-info}
       DATABASE_MAX_CONNECTIONS: "10"
       DATABASE_ACQUIRE_TIMEOUT_MS: "5000"

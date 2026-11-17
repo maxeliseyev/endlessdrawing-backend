@@ -33,7 +33,8 @@ def main():
         assert architecture == args.expected_arch, architecture
 
     project = "endlessdrawing-deploy-smoke-" + uuid.uuid4().hex[:12]
-    with tempfile.TemporaryDirectory(prefix="endlessdrawing-smoke-") as directory:
+    (ROOT / 'target').mkdir(exist_ok=True)
+    with tempfile.TemporaryDirectory(prefix="endlessdrawing-smoke-", dir=ROOT / 'target') as directory:
         env_file = Path(directory) / "runtime.env"
         password = secrets.token_hex(32)
         env_file.write_text(
@@ -47,6 +48,10 @@ def main():
         # Do not let a developer/CI DATABASE_URL override the disposable test credentials.
         for key in ("POSTGRES_DB", "POSTGRES_USER", "POSTGRES_PASSWORD", "DATABASE_URL", "ALLOWED_ORIGINS", "RUST_LOG", "ADMIN_ENABLED", "ADMIN_ORIGIN", "ADMIN_RP_ID"):
             env.pop(key, None)
+        secret_dir = Path(directory) / 'empty-admin-secrets'
+        secret_dir.mkdir()
+        env['ADMIN_SECRETS_DIR'] = str(secret_dir)
+        env['ADMIN_TOTP_KEY_FILE'] = ''
         env["ENDLESSDRAWING_IMAGE"] = args.image
         env["ADMIN_ENABLED"] = "false"
         command = ["docker", "compose", "-p", project, "--env-file", str(env_file), "-f", str(ROOT / "deploy" / "compose.yml")]

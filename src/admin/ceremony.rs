@@ -80,7 +80,7 @@ impl AdminService {
             .check_password(&input.login, Zeroizing::new(input.password), peer)
             .await?;
         let rows = self.credentials(account.id).await?;
-        if rows.len() < 2 {
+        if rows.is_empty() {
             return Err(AdminError::Unauthorized);
         }
         let inner = self.0.clone();
@@ -152,7 +152,7 @@ impl AdminService {
         .bind(account.id)
         .fetch_one(&mut *transaction)
         .await?;
-        if count < 2 {
+        if count < 1 {
             return Err(AdminError::Unauthorized);
         }
         let row = sqlx::query_as::<_, CredentialRow>(
@@ -206,6 +206,8 @@ impl AdminService {
             },
             expires_at,
             last_seen_at,
+            created_at: last_seen_at,
+            auth_method: "passkey_uv".into(),
         };
         Ok((info.reply(&token, &self.0.origin)?, token))
     }
@@ -329,8 +331,8 @@ impl AdminService {
         transaction.commit().await?;
         Ok(EnrollmentResult {
             registered_credentials: count + 1,
-            required_credentials: 2,
-            complete: count + 1 == 2,
+            required_credentials: 1,
+            complete: true,
         })
     }
 

@@ -33,6 +33,8 @@ use zeroize::Zeroizing;
 #[path = "support/passkey.rs"]
 mod passkey;
 use passkey::{BE, BS, TestPasskey, UP, UV};
+#[path = "support/admin_totp.rs"]
+mod totp_tests;
 
 const ORIGIN: &str = "https://canvas.example.test";
 const PASSWORD: &str = "test-only manager generated password 42!";
@@ -61,7 +63,9 @@ impl Fixture {
         };
         let (realtime, worker) =
             Realtime::start(pool.clone(), StrokeLimits::default(), settings).unwrap();
-        let config = AdminConfig::new(ORIGIN, "example.test".into()).unwrap();
+        let config = AdminConfig::new(ORIGIN, "example.test".into())
+            .unwrap()
+            .with_totp_key([7; 32]);
         let service = AdminService::new(pool.clone(), &realtime, config)
             .await
             .unwrap();
@@ -125,7 +129,8 @@ impl Fixture {
                 )
                 .await;
             assert_eq!(status, StatusCode::OK, "{result}");
-            assert_eq!(result["complete"], !primary);
+            assert_eq!(result["complete"], true);
+            assert_eq!(result["required_credentials"], 1);
         }
         // Enrollment is not authentication.
         assert_eq!(
@@ -843,7 +848,7 @@ async fn enroll_test_passkeys(fixture: &Fixture, flags: u8) -> (Client, TestPass
             )
             .await;
         assert_eq!(status, StatusCode::OK, "{result}");
-        assert_eq!(result["complete"], index == 1);
+        assert_eq!(result["complete"], true);
     }
     (client, primary)
 }
@@ -1211,7 +1216,7 @@ async fn commit_failure_invalidates_live_views_and_retry_recovers_from_a_fresh_s
 
 #[sqlx::test(migrations = "./migrations")]
 #[ignore = "requires PostgreSQL and DATABASE_URL"]
-async fn enrollment_requires_uv_a_live_grant_and_two_credentials_before_login(pool: PgPool) {
+async fn enrollment_requires_uv_a_live_grant_and_one_passkey_before_login(pool: PgPool) {
     let mut fixture = Fixture::new(pool.clone()).await;
     let grant = provision::create(&pool, LOGIN, Zeroizing::new(PASSWORD.into()))
         .await
@@ -1252,7 +1257,7 @@ async fn enrollment_requires_uv_a_live_grant_and_two_credentials_before_login(po
             "{mode}: {result}"
         );
         if mode == "first" {
-            assert_eq!(result["complete"], false);
+            assert_eq!(result["complete"], true);
             assert_eq!(
                 client
                     .call(
@@ -1263,7 +1268,7 @@ async fn enrollment_requires_uv_a_live_grant_and_two_credentials_before_login(po
                     )
                     .await
                     .0,
-                StatusCode::UNAUTHORIZED
+                StatusCode::OK
             );
         }
     }

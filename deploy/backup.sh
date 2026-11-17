@@ -60,9 +60,18 @@ if [[ $operation == export ]]; then
     fi
     [[ -s "$bundle/database.dump" ]] || fail 'Database export is empty'
     compose exec -T postgres pg_restore --list < "$bundle/database.dump" >> "$log" 2>&1 || fail 'Export archive is unreadable; see private operation log'
-    printf '{"format":1,"postgres_major":17,"image":"%s","frontend_sha":"%s","database_bytes":%s,"created_utc":"%s"}\n' \
-        "$image" "$frontend" "$database_bytes" "$(date -u +%FT%TZ)" > "$bundle/manifest.json"
-    (cd -- "$bundle" && sha256sum database.dump manifest.json > SHA256SUMS)
+    format=1
+    has_key=false
+    names=(database.dump manifest.json)
+    key="$app_dir/admin-secrets/totp.key"
+    if [[ -e $key ]]; then
+        [[ -f $key && ! -L $key && $(stat -c %s "$key") == 32 ]] || fail 'Invalid private TOTP key; export cancelled'
+        install -m 0600 "$key" "$bundle/totp-key.bin"
+        format=2; has_key=true; names+=(totp-key.bin)
+    fi
+    printf '{"format":%s,"totp_key_included":%s,"postgres_major":17,"image":"%s","frontend_sha":"%s","database_bytes":%s,"created_utc":"%s"}\n' \
+        "$format" "$has_key" "$image" "$frontend" "$database_bytes" "$(date -u +%FT%TZ)" > "$bundle/manifest.json"
+    (cd -- "$bundle" && sha256sum "${names[@]}" > SHA256SUMS)
     printf '%s\n' 'Local export only; NOT yet uploaded or off-site backed up' >&2
     # Last marker makes a completed export distinguishable from failed/partial output.
     printf '%s\n' 'local-export-v1' > "$bundle/READY"
@@ -80,7 +89,12 @@ done
 # A new failed drill must not leave an old verification-success marker behind.
 rm -f -- "$bundle/RESTORE_VERIFIED"
 # Recompute a fixed list. Do not allow an untrusted checksum list to read arbitrary paths.
-(cd -- "$bundle" && sha256sum database.dump manifest.json) > "$log.checksums"
+names=(database.dump manifest.json)
+if [[ -e $bundle/totp-key.bin ]]; then
+    [[ -f $bundle/totp-key.bin && ! -L $bundle/totp-key.bin && $(stat -c %s "$bundle/totp-key.bin") == 32 ]] || fail 'Invalid private TOTP key in bundle'
+    names+=(totp-key.bin)
+fi
+(cd -- "$bundle" && sha256sum "${names[@]}") > "$log.checksums"
 if ! cmp -s "$log.checksums" "$bundle/SHA256SUMS"; then
     rm -f -- "$log.checksums"
     fail 'Bundle checksum mismatch; verification cancelled'

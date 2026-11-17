@@ -10,6 +10,10 @@
 
 После закрытой выкладки backend `ff832e5` / frontend `5cc6de7` выполнен ещё один полный настоящий off-site round-trip: snapshot **`20261117T094648Z-a1354607`**, operator age decrypt на Mac, PostgreSQL 17 restore, migrations **1/2/3**. В нём 9 soft-deleted test strokes после трёхбраузерной staging-проверки, 0 accounts; контейнер/plaintext удалены, nonsensitive proof обновлён на VPS и у оператора. Это также проверка backup новой schema 0003, не только исходной пустой БД.
 
+## TOTP key (новая политика владельца)
+
+Google Authenticator — резерв вместо обязательного второго passkey; см. [admin-totp](admin-totp.md). При наличии private server KEK `/opt/endlessdrawing/admin-secrets/totp.key` export формирует **format 2**, добавляет `totp-key.bin` (32 bytes) в fixed checksums и **внутрь age archive**. В Box никогда не отправляется raw KEK. Это не операторский age identity; последний по-прежнему вне VPS. Format 1 (три файла, без KEK) остаётся поддержан. При restore нужна соответствующая key file; не генерировать новую вместо потерянной. Verifier дополнительно очищает pending TOTP и сдвигает last-used step за текущий +1, чтобы restore не воскресил replay window.
+
 ## Изоляция от construct
 
 В Hetzner создать НОВЫЙ Storage Box subaccount:
@@ -62,7 +66,7 @@ backups/weekly/<UTC_TIMESTAMP>-<random>/pg-....tar.age
 2. `pg_dump --format=custom --no-owner --no-privileges`: векторы, ownership digests, tombstones, accounts/credentials, audit, migrations. Custom format уже сжимает данные — второй gzip не нужен. Нет искусственного порога 1 MiB: новая пустая БД может давать маленький валидный архив.
 3. Archive list + SHA-256 фиксированного набора файлов и manifest с image/frontend SHA/PG major/размером БД. Это ещё не off-site backup.
 4. Реальный `pg_restore` в случайную **новую** `ed_verify_*` БД, проверка схемы/migrations, удаление только собственной временной БД. Ошибка create не даёт права drop существующего имени. Рабочая БД не восстанавливается. Дамп/SQL ошибки остаются в root-only logs, не в journal/body ответа.
-5. `tar(database.dump, manifest.json, SHA256SUMS)` → `age -r PUBLIC_RECIPIENT`. Приватного age identity нет на VPS. После успешного шифрования plaintext bundle удаляется; при сетевом сбое ciphertext сохраняется для диагностики/повтора. Failed export может оставить root-only incomplete bundle без READY: контролировать диск и убирать вручную после расследования.
+5. `tar(database.dump, manifest.json, SHA256SUMS, optional totp-key.bin)` → `age -r PUBLIC_RECIPIENT`. Приватного age identity нет на VPS. После успешного шифрования plaintext bundle удаляется; при сетевом сбое ciphertext сохраняется для диагностики/повтора. Failed export может оставить root-only incomplete bundle без READY: контролировать диск и убирать вручную после расследования.
 6. Upload в incoming, SSH SHA-256, отдельный `mv` в daily и повторная SHA-проверка. По воскресеньям (либо `--weekly`) отдельная weekly copy с проверками до/после публикации. Каждая remote операция — ОДНА команда, без `&&`, pipe или redirect: ограниченный shell Storage Box может молча отбросить их. Если `mv/cp` возвращает ложный успех, обязательная финальная SHA-проверка не даёт записать успех/запустить rotation.
 7. Только после всех проверок — retention 7 daily / 4 weekly. Полный подтверждённый успех атомарно записывается в `last-success.json`. Неподдерживаемая команда, невалидный hash, failed upload/restore или rotation дают ненулевой exit. Старые хорошие копии до upload verification не удаляются.
 

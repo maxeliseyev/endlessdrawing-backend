@@ -368,6 +368,22 @@ class OperatorRestoreTests(unittest.TestCase):
         file.write_bytes(data)
         with self.assertRaises(self.verify.VerificationError): self.verify.extract_payload(file, self.output)
 
+    def test_format2_restores_key_only_when_manifest_and_checksum_agree(self):
+        import io
+        import tarfile
+        dump=b'PGDMP-test-only fixture'
+        key=b'U'*32  # Public fixture, NOT a real encryption key.
+        manifest=json.dumps({'format':2,'totp_key_included':True,'postgres_major':17,'database_bytes':1024}).encode()
+        files={'database.dump':dump,'manifest.json':manifest,'totp-key.bin':key}
+        hashes=''.join(hashlib.sha256(data).hexdigest()+'  '+name+'\n' for name,data in files.items()).encode()
+        file=self.root/'format2.tar'
+        with tarfile.open(file,'w') as target:
+            for name,data in list(files.items())+[('SHA256SUMS',hashes)]:
+                item=tarfile.TarInfo(name); item.size=len(data); target.addfile(item,io.BytesIO(data))
+        restored=self.verify.extract_payload(file,self.output)
+        self.assertTrue(restored['totp_key_included'])
+        self.assertEqual((self.output/'totp-key.bin').read_bytes(),key)
+
     def test_remote_docker_endpoints_are_never_used_for_operator_drill(self):
         self.assertTrue(self.verify.local_endpoint('unix:///var/run/docker.sock'))
         for endpoint in ['ssh://production', 'tcp://production:2376', 'http://127.0.0.1:2375', '']:

@@ -168,6 +168,12 @@ class StorageBox:
 def encrypt_bundle(bundle, destination, recipient, log):
     # Custom-format pg_dump already compresses its data. Tar adds only checksummed metadata.
     names = ["database.dump", "manifest.json", "SHA256SUMS"]
+    manifest = json.loads((bundle / 'manifest.json').read_text()) if (bundle / 'manifest.json').is_file() else {}
+    if manifest.get('totp_key_included') is True:
+        key = bundle / 'totp-key.bin'
+        if not key.is_file() or key.is_symlink() or key.stat().st_size != 32:
+            raise BackupError('TOTP encryption key missing from verified bundle')
+        names.append('totp-key.bin')
     if not (bundle / "RESTORE_VERIFIED").is_file():
         raise BackupError("A successful isolated restore drill is required before encryption")
     with destination.open("xb") as encrypted:

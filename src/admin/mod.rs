@@ -9,6 +9,7 @@ mod error;
 mod moderation;
 pub mod provision;
 mod rate;
+mod totp;
 
 pub use config::AdminConfig;
 pub use error::AdminError;
@@ -24,7 +25,7 @@ use crate::realtime::{Realtime, Writer};
 use crypto::Token;
 use rate::RateLimits;
 
-/// Enabled administrator service. Password and UV-required WebAuthn remain separate factors.
+/// Administrator service: password + UV passkey, or explicitly configured TOTP backup.
 #[derive(Clone)]
 pub struct AdminService(Arc<Inner>);
 struct Inner {
@@ -36,6 +37,7 @@ struct Inner {
     dummy_hash: String,
     crypto_jobs: Arc<Semaphore>,
     rate: RateLimits,
+    totp_key: Option<zeroize::Zeroizing<[u8; 32]>>,
 }
 
 impl AdminService {
@@ -46,11 +48,11 @@ impl AdminService {
     pub async fn new(
         pool: PgPool,
         realtime: &Realtime,
-        config: AdminConfig,
+        mut config: AdminConfig,
     ) -> Result<Self, AdminError> {
         // Bind saved sessions/ceremonies to this policy and RP as well as the exact origin.
         let mut policy = Sha256::new();
-        policy.update(b"endlessdrawing/admin/password+passkey/uv-required/v1\0");
+        policy.update(b"endlessdrawing/admin/password+(passkey-uv|totp-backup)/v2\0");
         policy.update(config.rp_id.as_bytes());
         let policy_digest = policy.finalize().into();
         let webauthn = WebauthnBuilder::new(&config.rp_id, &config.origin)
@@ -59,6 +61,38 @@ impl AdminService {
             .timeout(Duration::from_secs(120))
             .build()
             .map_err(|_| AdminError::Unavailable)?;
+        if let Some(path) = config.totp_key_file.take() {
+            let metadata = tokio::fs::symlink_metadata(&path)
+                .await
+                .map_err(|_| AdminError::Unavailable)?;
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                if metadata.permissions().mode() & 0o077 != 0 {
+                    return Err(AdminError::Unavailable);
+                }
+            }
+            if !metadata.is_file() || metadata.len() != 32 {
+                return Err(AdminError::Unavailable);
+            }
+            let bytes = zeroize::Zeroizing::new(
+                tokio::fs::read(path)
+                    .await
+                    .map_err(|_| AdminError::Unavailable)?,
+            );
+            config.totp_key = Some(zeroize::Zeroizing::new(
+                bytes
+                    .as_slice()
+                    .try_into()
+                    .map_err(|_| AdminError::Unavailable)?,
+            ));
+        }
+        totp::validate_key(
+            &pool,
+            config.totp_key.as_deref(),
+            &config.origin.origin().ascii_serialization(),
+        )
+        .await?;
         let dummy_password = Token::random()?.encoded();
         let dummy_hash =
             tokio::task::spawn_blocking(move || crypto::hash_password(&dummy_password))
@@ -73,6 +107,7 @@ impl AdminService {
             dummy_hash,
             crypto_jobs: Arc::new(Semaphore::new(2)),
             rate: RateLimits::default(),
+            totp_key: config.totp_key,
         })))
     }
 

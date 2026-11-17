@@ -55,7 +55,7 @@ fn main() -> Result<()> {
         };
         pool.close().await;
         if let Some(grant) = result {
-            eprintln!("Account: {}. Enrollment expires: {}. TWO credentials are required; this is NOT an admin session.", grant.account_id(), grant.expires_at());
+            eprintln!("Account: {}. Enrollment expires: {}. Register ONE UV passkey, then sign in to optionally connect Google Authenticator backup. This is NOT an admin session.", grant.account_id(), grant.expires_at());
             eprintln!("Keep the following enrollment capability private; enter only in the HTTPS admin enrollment form:");
             println!("{}", grant.secret());
         } else { eprintln!("Administrator disabled; existing access revoked."); }

@@ -1,11 +1,11 @@
 # Admin API v1 — общий контракт backend / frontend
 
-Статус: **backend и frontend совместно проверены на HTTPS с PostgreSQL и виртуальными Chromium UV passkeys; настоящий Touch ID и production HTTPS ещё не приняты**. Точные границы — в разделе «Готовность» ниже. Требования: [модерация](moderation.md). Этот файл — единственный источник wire-форм для двух сессий; изменения форм согласовывать здесь, не изобретать второй контракт во frontend.
+Статус: доверенный закрытый production HTTPS работает; реальная браузерная интеграция проверяется с PostgreSQL и виртуальными UV passkeys. **Новая политика владельца: пароль + один UV passkey, Google Authenticator (TOTP) — альтернативный резервный фактор, не дополнительный шаг после Touch ID.** Точные границы — в разделе «Готовность» ниже. Требования: [модерация](moderation.md). Этот файл — единственный источник wire-форм для двух сессий; изменения форм согласовывать здесь, не изобретать второй контракт во frontend.
 
 ## Инварианты
 
 - Отдельный `/admin/`, без imports/ссылок/shortcut в публичном приложении. EN/RU UI.
-- По явному решению владельца используется пароль **и обычный WebAuthn passkey с UV required**, включая Touch ID/platform и синхронизируемые passkeys. Password-only сессии нет. Аттестация устройства и CA trust store не требуются. Backend по умолчанию admin-disabled до явной настройки HTTPS RP/origin.
+- По явному решению владельца используется пароль **и обычный WebAuthn passkey с UV required**, включая Touch ID/platform и синхронизируемые passkeys. Явный резерв — пароль + ранее подтверждённый TOTP. Password-only сессии нет. Аттестация устройства и CA trust store не требуются. Backend по умолчанию admin-disabled до явной настройки HTTPS RP/origin.
 - Только server cookie `__Host-ed-admin`, HttpOnly/Secure/SameSite=Strict/Path=/, без Domain. Pre-auth cookie `__Host-ed-admin-preauth` прав не даёт.
 - Все fetch: `credentials: "same-origin"`, без CORS, секретов в Storage/VITE/URL/логах.
 - Все изменяющие запросы: JSON, `X-CSRF-Token`, browser Origin должен точно соответствовать admin origin. Cookie не расширяет права публичного WS.
@@ -65,6 +65,7 @@ Buffer-поля кодировать base64url без padding. `extensions` — 
 ```json
 {
   "authenticated":true,
+  "auth_method":"passkey_uv",
   "account":{"id":"94dc430b-83c1-4d87-9797-66fa696c7b28","login":"moderator"},
   "csrf_token":"<base64url>",
   "expires_at":"2026-11-16T20:00:00Z",
@@ -75,6 +76,18 @@ Buffer-поля кодировать base64url без padding. `extensions` — 
 Challenge 120 секунд, pre-auth 5 минут, полная сессия: idle 15 минут / absolute 8 часов. Каждый допущенный к проверке WebAuthn verify attempt потребляет challenge, включая неверную подпись; при ошибке/отмене/истечении заново пройти password → challenge, не повторять assertion. Отмена browser dialog не открывает права и не вызывает password-only fallback.
 
 `POST /api/admin/logout` с полным session CSRF и `{}` body → `204`, серверный отзыв и очистка cookie. `401` также закрывает UI.
+
+### Резерв Google Authenticator (TOTP)
+
+Сессия `auth_method` — `passkey_uv` либо `totp`. `authenticator_policy` в options относится к **основному WebAuthn UV**; резерв выбирается явно отдельной кнопкой.
+
+- `POST /api/admin/login/totp` `{ "login":"moderator", "password":"<password>", "code":"<6 ASCII digits>" }`: тот же pre-auth cookie/CSRF из login/options; `200` SessionReply + новая полная cookie. Password rate limits общие; backup должен быть подтверждён заранее. Wrong/missing/expired/replayed codes/password → generic 401; password-only сессии нет.
+- `GET /api/admin/totp/status` → `200 {"available":true,"enabled":false,"fresh_passkey":true}`. Требует полную session, secret не возвращается.
+- `POST /api/admin/totp/setup/start` `{}` → `200 {"secret":"<Base32>","otpauth_uri":"otpauth://totp/<label>?secret=<Base32>&issuer=Endless%20Drawing&algorithm=SHA1&digits=6&period=30","expires_at":"<RFC3339>"}`. Только CSRF + primary UV session, созданная менее 5 минут назад. QR генерировать локально; никогда не отправлять URI внешнему QR-сервису и не сохранять secret в Storage/логи/URL страницы. Pending secret привязан к конкретной session, expires 5 минут; active secret повторно не выдаётся.
+- `POST /api/admin/totp/setup/confirm` `{"code":"<6 ASCII digits>"}` → `204`; та же fresh UV session и её pending setup. Только после верного кода backup enabled. Код подтверждения сразу consumed, для backup login дождаться нового кода.
+- `POST /api/admin/totp/disable` `{}` → `204`; только fresh UV session. TOTP sessions не могут управлять факторами: 403 даже при действующей cookie/CSRF. После изменения backup все другие sessions и старые ceremonies/grants отзываются; текущая fresh primary session сохраняется.
+
+TOTP: RFC 6238 SHA1, 6 digits/30s, +/-1 step; counter атомарно consumed с session creation под account lock, replay и concurrent duplicate отклоняются. Никаких raw codes/secrets в audit. Private server key file и encrypted backup/recovery: [операционный runbook](admin-totp.md).
 
 ## 2. Просмотр и скрытие
 
@@ -118,7 +131,7 @@ Batch атомарный: неизвестный UUID → 404 и ни одног
 {"credential":{"id":"<base64url>","rawId":"<base64url>","type":"public-key","response":{"attestationObject":"<base64url>","clientDataJSON":"<base64url>","transports":["internal"]},"extensions":{}}}
 ```
 
-`200`: `{"registered_credentials":1,"required_credentials":2,"complete":false}`. Повторить start/finish с запасным ключом; при complete:true перейти к **новому обычному входу**, не считать enrollment административной сессией. Token ограничен двумя успешными регистрациями и 15 минутами. Основной и резервный passkeys должны иметь разные credential ID. Mac и iPhone в одном iCloud могут синхронизировать один credential: это не две регистрации и не независимые резервные провайдеры. Независимость резервного доступа проверяет оператор; возможны другой passkey provider либо отдельный security key с UV.
+`200`: `{"registered_credentials":1,"required_credentials":1,"complete":true}`. Достаточно **одного** UV passkey; уже сохранённые credentials не меняются. Перейти к **новому обычному входу** с паролем+passkey — enrollment не создаёт сессию. Grant по-прежнему 15 минут/max 2 registrations (второй passkey необязателен). Затем владелец может подключить TOTP-резерв после fresh primary login. Не выполнять recovery для уже успешно зарегистрированного одного ключа только ради новой политики.
 
 ## 4. Ошибки
 

@@ -40,6 +40,8 @@ systemctl enable --now docker
 docker compose version
 docker info >/dev/null
 install -d -m 0700 "$config_dir" "$app_dir/backups"
+# Empty mount source for admin-disabled installs; key provisioning is explicit/separate.
+if [[ ! -d $app_dir/admin-secrets ]]; then install -d -m 0755 "$app_dir/admin-secrets"; fi
 install -o root -g root -m 0644 "$source_dir/compose.yml" "$app_dir/compose.yml"
 install -o root -g root -m 0755 "$source_dir/activate.sh" /usr/local/sbin/endlessdrawing-activate
 

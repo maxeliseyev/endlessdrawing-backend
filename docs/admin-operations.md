@@ -1,6 +1,6 @@
 # Администратор: passkeys / Touch ID и закрытый provisioning
 
-Статус: backend и `/admin/` прошли [совместную HTTPS/API/WS/DB проверку](admin-integration.md), повторённую с frontend `5cc6de7`, с виртуальными Chromium UV аутентификаторами. Production HTTPS уже доверенный, Caddy допускает только явно подтверждённый operator `/32` и loopback. Настоящий Touch ID, два независимых credentials и аккаунт требуют закрытой приёмки владельцем. Актуальный релиз/API status — в [publication checklist](publication.md). Wire-контракт: [admin-api.md](admin-api.md).
+Статус: backend и `/admin/` прошли [совместную HTTPS/API/WS/DB проверку](admin-integration.md), повторённую с frontend `5cc6de7`, с виртуальными Chromium UV аутентификаторами. Production HTTPS уже доверенный, Caddy допускает только явно подтверждённый operator `/32` и loopback. Владелец изменил backup policy: **один UV passkey для основного входа, пароль+Google Authenticator как альтернативный резерв**. Уже зарегистрированный passkey не сбрасывать; два credentials не обязательны. Подключение TOTP и проверка обоих входов — закрытая приёмка владельца, [новый runbook](admin-totp.md). Актуальный релиз/API status — в [publication checklist](publication.md). Wire-контракт: [admin-api.md](admin-api.md).
 
 ## До включения
 
@@ -34,9 +34,9 @@ docker compose --env-file /etc/endlessdrawing/runtime.env \
 
 CLI дважды запросит пароль без echo: сгенерированный менеджером, минимум 20 символов, максимум 1024 UTF-8 bytes. Пароль не передавать в argv или shell history. Выданный enrollment token — секретная возможность регистрации, не сессия модератора; действует 15 минут и на две успешные регистрации. Не отправлять его в переписку/логи.
 
-На том же HTTPS origin вручную открыть `/admin/`, выбрать enrollment, ввести login/password/token и label, зарегистрировать основной и резервный passkeys. Браузер/провайдер создаёт ключи; `ssh-keygen` и загрузка SSH private key не нужны. Сайт хранит credential ID и публичный ключ. Touch ID/iCloud разрешены; сервер проверяет UV, а не получает биометрию и не гарантирует исключительно отпечаток.
+На том же HTTPS origin вручную открыть `/admin/`, выбрать enrollment, ввести login/password/token и label, зарегистрировать **один основной** passkey. Если он уже сохранён на сервере, не повторять create/recover: перейти к обычному входу. Браузер/провайдер создаёт ключи; `ssh-keygen` и загрузка SSH private key не нужны. Сайт хранит credential ID и публичный ключ. Touch ID/iCloud разрешены; сервер проверяет UV, а не получает биометрию и не гарантирует исключительно отпечаток.
 
-Требуются два разных credential ID. Один iCloud passkey на Mac и iPhone — обычно одна синхронизированная регистрация, не независимый резерв. Выбрать отдельный резервный провайдер либо UV-capable security key; backend не требует аппаратную аттестацию и не может доказать независимость провайдеров за оператора.
+Второй passkey необязателен. Владелец выбрал Google Authenticator вместо него: после password+Touch ID login открыть резервную настройку, отсканировать QR локально и подтвердить код. Через резервный password+TOTP login менять факторы нельзя; для этого нужен свежий основной вход не старше 5 минут. QR/secret/code не передавать агенту.
 
 `complete:true` не авторизует модерацию. Перейти к новому обычному входу: login/password → WebAuthn get → server session. Проверить вход с каждым credential. После регистрации очистить enrollment token и пароль из памяти формы.
 
@@ -52,7 +52,7 @@ docker compose --env-file /etc/endlessdrawing/runtime.env \
   -f /opt/endlessdrawing/compose.yml exec backend /app/canvas-admin disable moderator
 ```
 
-CLI потребует явное подтверждение. Recovery — только после проверки личности владельца: новый пароль, отзыв всех прежних credentials, sessions и enrollment/ceremonies, затем две новые регистрации. Disable отзывает sessions/enrollment и блокирует аккаунт; recovery может его включить обратно. Нет email/password-only/универсального recovery-secret обхода. Если CLI завершился с неопределённой ошибкой commit, не считать token выданным или account несуществующим: закрыто проверить состояние и при необходимости выполнить recovery.
+CLI потребует явное подтверждение. Recovery — только после проверки личности владельца: новый пароль, отзыв всех прежних credentials, sessions, TOTP и enrollment/ceremonies, затем новый primary passkey и повторная настройка TOTP. Disable отзывает sessions/enrollment и блокирует аккаунт; recovery может его включить обратно. Нет email/password-only/универсального recovery-secret обхода. Если CLI завершился с неопределённой ошибкой commit, не считать token выданным или account несуществующим: закрыто проверить состояние и при необходимости выполнить recovery.
 
 Logout отзывает текущую сессию, а не все устройства. Idle — 15 минут, absolute — 8 часов. Ожидающее в writer скрытие перепроверяет сессию внутри транзакции: после успешного logout/recovery оно не получает старые права.
 

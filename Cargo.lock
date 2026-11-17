@@ -21,6 +21,7 @@ dependencies = [
  "cipher",
  "cpubits",
  "cpufeatures 0.3.1",
+ "zeroize",
 ]
 
 [[package]]
@@ -35,6 +36,7 @@ dependencies = [
  "ctr",
  "ctutils",
  "ghash",
+ "zeroize",
 ]
 
 [[package]]
@@ -807,12 +809,14 @@ dependencies = [
 name = "endless-drawing-server"
 version = "0.1.0"
 dependencies = [
+ "aes-gcm",
  "anyhow",
  "argon2",
  "axum",
  "base64 0.22.1",
  "chrono",
  "crypto-glue",
+ "data-encoding",
  "dotenvy",
  "futures-util",
  "hmac 0.12.1",
@@ -822,8 +826,10 @@ dependencies = [
  "serde",
  "serde_cbor_2",
  "serde_json",
+ "sha1 0.10.7",
  "sha2 0.10.9",
  "sqlx",
+ "subtle",
  "tempfile",
  "thiserror 2.0.21",
  "tokio",
@@ -1087,6 +1093,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "2eecf2d5dc9b66b732b97707a0210906b1d30523eb773193ab777c0c84b3e8d5"
 dependencies = [
  "polyval",
+ "zeroize",
 ]
 
 [[package]]
@@ -1990,6 +1997,7 @@ dependencies = [
  "cpubits",
  "cpufeatures 0.3.1",
  "universal-hash",
+ "zeroize",
 ]
 
 [[package]]

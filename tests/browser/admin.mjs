@@ -9,7 +9,19 @@ import { createServer } from 'node:https';
 import { request } from 'node:http';
 import { connect } from 'node:net';
 import { createInterface } from 'node:readline';
-import { randomUUID } from 'node:crypto';
+import { randomUUID, createHmac } from 'node:crypto';
+
+function testTotp(secret, step = Math.floor(Date.now() / 30000)) {
+  let bits = 0, value = 0; const bytes = [];
+  for (const character of secret) {
+    value = (value << 5) | 'ABCDEFGHIJKLMNOPQRSTUVWXYZ234567'.indexOf(character); bits += 5;
+    if (bits >= 8) { bits -= 8; bytes.push((value >>> bits) & 255); value &= (1 << bits) - 1; }
+  }
+  const counter = Buffer.alloc(8); counter.writeBigInt64BE(BigInt(step));
+  const digest = createHmac('sha1', Buffer.from(bytes)).update(counter).digest();
+  const offset = digest[19] & 15;
+  return String((digest.readUInt32BE(offset) & 0x7fffffff) % 1000000).padStart(6, '0');
+}
 
 const require = createRequire(join(resolve(process.argv[2]), 'package.json'));
 const { chromium, expect: baseExpect } = require('@playwright/test');
@@ -105,7 +117,8 @@ try {
     await admin.getByLabel('Passkey label', { exact: true }).fill(`Virtual ${index + 1}`);
     await admin.getByRole('button', { name: 'Register passkey', exact: true }).click();
     if (index === 0) {
-      await expect(admin.getByRole('status')).toContainText('Registered 1 of 2');
+      await expect(admin.getByRole('status')).toContainText('Passkey setup complete');
+      await admin.getByRole('button', { name: 'Register administrator passkeys', exact: true }).click();
       // Chromium permits one internal authenticator at a time. Private TEST credentials
       // stay only in this process memory, never stdout/artifacts or production storage.
       primaryCredentials = (await cdp.send('WebAuthn.getCredentials', { authenticatorId: primary })).credentials;
@@ -127,6 +140,15 @@ try {
   expect(cookie && { httpOnly: cookie.httpOnly, secure: cookie.secure, sameSite: cookie.sameSite, path: cookie.path })
     .toEqual({ httpOnly: true, secure: true, sameSite: 'Strict', path: '/' });
   expect(await admin.evaluate(() => document.cookie.includes('__Host-ed-admin'))).toBe(false);
+  expect(await admin.evaluate(() => ({ ...localStorage, ...sessionStorage }))).toEqual({});
+  step = 'fresh UV session configures local Google Authenticator QR and confirms a real TOTP';
+  await admin.getByRole('button', { name: 'Google Authenticator backup', exact: true }).click();
+  await admin.getByRole('button', { name: 'Connect Google Authenticator', exact: true }).click();
+  await expect(admin.locator('.totp-qr')).toBeVisible();
+  let totpSecret = await admin.getByLabel('Manual setup key (keep private)', { exact: true }).inputValue();
+  await admin.getByLabel('Six-digit code', { exact: true }).fill(testTotp(totpSecret));
+  await admin.getByRole('button', { name: 'Confirm backup code', exact: true }).click();
+  await expect(admin.locator('.totp-dialog')).toHaveCount(0);
   expect(await admin.evaluate(() => ({ ...localStorage, ...sessionStorage }))).toEqual({});
   step = 'selection, confirmation, real audited hide and two-client live deletion';
   const bounds = await admin.locator('canvas').boundingBox();
@@ -162,8 +184,22 @@ try {
   await login();
   await admin.getByRole('button', { name: 'Sign out', exact: true }).click();
   await expect(admin.getByRole('heading', { name: 'Administrator sign in' })).toBeVisible();
+  step = 'password plus Google Authenticator backup login; fallback cannot change factors';
+  await admin.getByRole('button', { name: 'Use Google Authenticator backup', exact: true }).click();
+  await admin.getByLabel('Login', { exact: true }).fill(config.login);
+  await admin.getByLabel('Password', { exact: true }).fill(config.password);
+  await admin.getByLabel('Six-digit code', { exact: true }).fill(testTotp(totpSecret, Math.floor(Date.now() / 30000) + 1));
+  totpSecret = '';
+  await admin.getByRole('button', { name: 'Sign in with backup code', exact: true }).click();
+  await expect(admin.locator('.world-status')).toHaveText('Shared world loaded');
+  await admin.getByRole('button', { name: 'Google Authenticator backup', exact: true }).click();
+  await expect(admin.locator('.totp-dialog')).toContainText('Backup-code sessions cannot change factors');
+  await expect(admin.locator('.totp-qr')).toHaveCount(0);
+  await admin.getByRole('button', { name: 'Close', exact: true }).click();
+  await admin.getByRole('button', { name: 'Sign out', exact: true }).click();
+  await expect(admin.getByRole('heading', { name: 'Administrator sign in' })).toBeVisible();
   expect(pageErrors).toEqual([]);
-  console.log('PASS: real HTTPS frontend/backend enrollment, both native virtual credentials, cookies, WS, audited hide, snapshots and logout.');
+  console.log('PASS: real HTTPS frontend/backend UV and TOTP backup login, encrypted setup, cookies, WS, audited hide, snapshots and logout.');
 } catch (error) {
   // Never dump form inputs, request bodies, cookies or CDP private credentials.
   const notice = admin ? await admin.locator('.notice').textContent().catch(() => '') : '';

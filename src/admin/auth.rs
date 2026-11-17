@@ -50,6 +50,7 @@ pub(crate) struct SessionReply {
     csrf_token: String,
     expires_at: DateTime<Utc>,
     idle_expires_at: DateTime<Utc>,
+    auth_method: String,
 }
 #[derive(Serialize)]
 pub(crate) struct OptionsReply {
@@ -62,12 +63,15 @@ pub(crate) struct SessionInfo {
     pub account: AccountView,
     pub expires_at: DateTime<Utc>,
     pub last_seen_at: DateTime<Utc>,
+    pub auth_method: String,
+    pub created_at: DateTime<Utc>,
 }
 
 impl SessionInfo {
     pub fn reply(self, token: &Token, origin: &str) -> Result<SessionReply, AdminError> {
         Ok(SessionReply {
             authenticated: true,
+            auth_method: self.auth_method,
             account: self.account,
             csrf_token: token.csrf("session", origin)?,
             expires_at: self.expires_at,
@@ -115,22 +119,29 @@ pub(crate) async fn authorize(
     if !account.enabled {
         return Err(AdminError::Unauthorized);
     }
-    let session: Option<(DateTime<Utc>,)> = sqlx::query_as(
-        "SELECT expires_at FROM admin_sessions WHERE token_digest = $1 AND account_id = $2
+    let session: Option<(DateTime<Utc>, String, DateTime<Utc>)> = sqlx::query_as(
+        "SELECT expires_at, auth_method, created_at FROM admin_sessions WHERE token_digest = $1 AND account_id = $2
          AND auth_version = $3 AND origin = $4 AND policy_digest = $5 AND revoked_at IS NULL
          AND expires_at > clock_timestamp() AND last_seen_at > clock_timestamp() - interval '15 minutes'
          FOR UPDATE",
     ).bind(proof.token_digest.as_slice()).bind(account.id).bind(account.auth_version)
         .bind(&proof.origin).bind(proof.policy_digest.as_slice()).fetch_optional(&mut *connection).await?;
-    let (expires_at,) = session.ok_or(AdminError::Unauthorized)?;
+    let (expires_at, auth_method, created_at) = session.ok_or(AdminError::Unauthorized)?;
     let count: i64 = sqlx::query_scalar(
         "SELECT count(*) FROM admin_credentials WHERE account_id = $1 AND revoked_at IS NULL",
     )
     .bind(account.id)
     .fetch_one(&mut *connection)
     .await?;
-    if count < 2 {
+    if count < 1 {
         return Err(AdminError::Unauthorized);
+    }
+    if auth_method == "totp" {
+        let enabled: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM admin_totp WHERE account_id=$1 AND encrypted_secret IS NOT NULL)")
+            .bind(account.id).fetch_one(&mut *connection).await?;
+        if !enabled {
+            return Err(AdminError::Unauthorized);
+        }
     }
     let last_seen_at: DateTime<Utc> = sqlx::query_scalar("UPDATE admin_sessions SET last_seen_at = clock_timestamp() WHERE token_digest = $1 RETURNING last_seen_at")
         .bind(proof.token_digest.as_slice()).fetch_one(connection).await?;
@@ -141,6 +152,8 @@ pub(crate) async fn authorize(
         },
         expires_at,
         last_seen_at,
+        auth_method,
+        created_at,
     })
 }
 

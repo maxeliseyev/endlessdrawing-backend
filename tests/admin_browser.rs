@@ -56,7 +56,9 @@ async fn real_https_frontend_enrollment_login_hide_and_logout(pool: PgPool) {
     let service = AdminService::new(
         pool.clone(),
         &realtime,
-        AdminConfig::new(origin, "localhost".into()).unwrap(),
+        AdminConfig::new(origin, "localhost".into())
+            .unwrap()
+            .with_totp_key([11; 32]),
     )
     .await
     .unwrap();

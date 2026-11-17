@@ -41,7 +41,8 @@ def extract_payload(archive, directory):
     expected = {'database.dump', 'manifest.json', 'SHA256SUMS'}
     with tarfile.open(archive, mode='r:') as source:
         members = source.getmembers()
-        if len(members) != 3 or {item.name for item in members} != expected:
+        actual = {item.name for item in members}
+        if len(members) != len(actual) or actual not in [expected, expected | {'totp-key.bin'}]:
             raise VerificationError('Unexpected or duplicate archive entries')
         if any(not item.isfile() or item.size < 0 for item in members):
             raise VerificationError('Archive links and special files are forbidden')
@@ -53,14 +54,20 @@ def extract_payload(archive, directory):
             with source.extractfile(item) as data, (directory / item.name).open('xb') as output:
                 shutil.copyfileobj(data, output, 1024 * 1024)
     manifest = json.loads((directory / 'manifest.json').read_text())
-    if (manifest.get('format') != 1 or manifest.get('postgres_major') != 17
+    key_included = manifest.get('totp_key_included') is True
+    if key_included != (directory / 'totp-key.bin').is_file() or manifest.get('format') != (2 if key_included else 1):
+        raise VerificationError('Key/manifest version mismatch')
+    if key_included and (directory / 'totp-key.bin').stat().st_size != 32:
+        raise VerificationError('Invalid recovered TOTP encryption key')
+    if (manifest.get('postgres_major') != 17
             or type(manifest.get('database_bytes')) is not int
             or not 0 < manifest['database_bytes'] <= MAX_DATABASE_BYTES):
         raise VerificationError('Unsupported format, PostgreSQL version or database size; plan a larger isolated drill explicitly')
     with (directory / 'database.dump').open('rb') as file:
         if file.read(5) != b'PGDMP':
             raise VerificationError('Not a custom PostgreSQL dump')
-    checksums = ''.join(f'{digest(directory / name)}  {name}\n' for name in ['database.dump', 'manifest.json'])
+    names = ['database.dump', 'manifest.json'] + (['totp-key.bin'] if key_included else [])
+    checksums = ''.join(f'{digest(directory / name)}  {name}\n' for name in names)
     if checksums != (directory / 'SHA256SUMS').read_text():
         raise VerificationError('Payload checksum mismatch')
     return manifest
@@ -137,6 +144,11 @@ UPDATE admin_accounts SET auth_version = auth_version + 1;
 UPDATE admin_sessions SET revoked_at = clock_timestamp() WHERE revoked_at IS NULL;
 DELETE FROM admin_preauth;
 DELETE FROM admin_enrollments;
+DO $$ BEGIN
+ IF to_regclass('admin_totp') IS NOT NULL THEN
+  EXECUTE 'UPDATE admin_totp SET pending_secret=NULL,pending_expires_at=NULL,pending_session_digest=NULL,last_used_step=GREATEST(COALESCE(last_used_step,0),floor(extract(epoch FROM clock_timestamp())/30)::bigint+1)';
+ END IF;
+END $$;
 COMMIT;
 SELECT json_build_object(
  'strokes', (SELECT count(*) FROM strokes),
@@ -156,7 +168,7 @@ SELECT json_build_object(
                     run(['docker', 'rm', '--force', '--volumes', name], stdin=subprocess.DEVNULL)
             report = {'verified_utc': datetime.now(timezone.utc).isoformat(), 'ciphertext_sha256': args.sha256,
                       'operator_age_decryption': True, 'isolated_restore': True, 'candidate_sessions_revoked': True,
-                      'production_touched': False, 'image': manifest.get('image'), 'frontend_sha': manifest.get('frontend_sha'),
+                      'production_touched': False, 'totp_key_restored': manifest.get('totp_key_included') is True, 'image': manifest.get('image'), 'frontend_sha': manifest.get('frontend_sha'),
                       'restored': result}
     # Record success only AFTER both container and private plaintext cleanup succeeded.
     args.report.parent.mkdir(parents=True, mode=0o700, exist_ok=True)

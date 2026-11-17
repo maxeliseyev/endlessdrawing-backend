@@ -55,6 +55,7 @@ mapfile -t ciphers < <(find "$work/spool" -maxdepth 1 -name '*.tar.age' -type f)
 age -d -i "$work/test-only-age-identity" -o "$work/recovered.tar" "${ciphers[0]}"
 tar -xf "$work/recovered.tar" -C "$work/received"
 (cd "$work/received" && sha256sum --check SHA256SUMS > /dev/null)
+[[ $(stat -c %s "$work/received/totp-key.bin") == 32 ]] # Encryption key travels only INSIDE age.
 IFS= read -r ENDLESSDRAWING_IMAGE < "$root/app/current-image"
 export ENDLESSDRAWING_IMAGE
 compose() { docker compose --env-file "$root/config/runtime.env" -f "$root/app/compose.yml" "$@"; }
@@ -86,10 +87,16 @@ def main():
     project = "endlessdrawing-backup-smoke-" + uuid.uuid4().hex[:12]
     image = "endlessdrawing-app:" + "a" * 40 + "-" + str(secrets.randbits(64)) + "-1"
     subprocess.run(["docker", "build", "-f", str(ROOT / "tests/deploy/backup-tools.Dockerfile"), "-t", TOOLS, str(ROOT)], check=True)
-    with tempfile.TemporaryDirectory(prefix="endlessdrawing-backup-smoke-") as temporary:
+    # Keep bind sources under the shared checkout (macOS private /var may be unshared).
+    (ROOT / 'target').mkdir(exist_ok=True)
+    with tempfile.TemporaryDirectory(prefix="endlessdrawing-backup-smoke-", dir=ROOT / 'target') as temporary:
         root = Path(temporary).resolve()
         app, config = root / "app", root / "config"
         app.mkdir(); config.mkdir()
+        secret_dir=app/'admin-secrets'; secret_dir.mkdir()
+        # Public, deterministic TEST fixture, not a real server encryption key.
+        (secret_dir/'totp.key').write_bytes(b'U'*32)
+        (secret_dir/'totp.key').chmod(0o644)
         dockerfile = root / "Dockerfile"
         dockerfile.write_text(f'FROM {args.image}\nLABEL io.endlessdrawing.frontend-revision="' + "b" * 40 + '"\n')
         subprocess.run(["docker", "build", "-t", image, str(root)], check=True)
@@ -103,12 +110,14 @@ def main():
         (config / "runtime.env").write_text(
             "POSTGRES_DB=canvas\nPOSTGRES_USER=canvas\n" + f"POSTGRES_PASSWORD={password}\n" +
             f"DATABASE_URL=postgres://canvas:{password}@postgres:5432/canvas\n" +
-            "ALLOWED_ORIGINS=http://localhost:8080\nADMIN_ENABLED=false\n"
+            "ALLOWED_ORIGINS=http://localhost:8080\nADMIN_ENABLED=false\n" + f"ADMIN_SECRETS_DIR={secret_dir}\n"
         )
         (config / "runtime.env").chmod(0o600)
         env = dict(os.environ)
         for key in ("POSTGRES_DB", "POSTGRES_USER", "POSTGRES_PASSWORD", "DATABASE_URL", "ALLOWED_ORIGINS", "ADMIN_ENABLED", "ADMIN_ORIGIN", "ADMIN_RP_ID"):
             env.pop(key, None)
+        env['ADMIN_SECRETS_DIR'] = str(secret_dir)
+        env['ADMIN_TOTP_KEY_FILE'] = ''
         env["ENDLESSDRAWING_IMAGE"] = image
         command = ["docker", "compose", "-p", project, "--env-file", str(config / "runtime.env"), "-f", str(app / "compose.yml")]
         try:
