@@ -22,5 +22,5 @@ IFS= read -r -p 'Print the AGE-SECRET-KEY line so you can paste it into your pas
 [[ $confirm == yes ]] || { printf '%s\n' 'Cancelled; nothing printed.' >&2; exit 1; }
 
 printf '%s\n' '--- copy exactly the one AGE-SECRET-KEY-... line below into your password manager ---'
-cat "$identity"
+grep '^AGE-SECRET-KEY-' "$identity"
 printf '%s\n' '--- end of secret; clear your terminal scrollback and clipboard after storing ---'
