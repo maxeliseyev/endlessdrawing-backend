@@ -168,7 +168,8 @@ def collect(now):
     details = []
     try:
         with urllib.request.urlopen('http://127.0.0.1:8080/readyz', timeout=5) as reply:
-            if json.loads(reply.read(4096)).get('status') != 'ready':
+            body = json.loads(reply.read(4096))
+            if not isinstance(body, dict) or body.get('status') != 'ready':
                 raise ValueError('Not ready')
     except (OSError, ValueError, urllib.error.URLError):
         issues.append('Приложение или PostgreSQL не готовы (readyz).')
@@ -180,11 +181,15 @@ def collect(now):
             issues.append('TLS certificate истекает менее чем через 14 дней.')
     except (OSError, ValueError, KeyError, ssl.SSLError):
         issues.append('Не удалось проверить доверенный HTTPS certificate.')
-    disk = shutil.disk_usage('/var/lib/docker')
-    free_gib = disk.free / 2**30
-    if free_gib < 5 or disk.free / disk.total < 0.15:
-        issues.append('Мало диска на VPS: менее 5 GiB или 15% свободно.')
-    details.append(f'VPS disk free: {free_gib:.1f} GiB')
+    try:
+        disk = shutil.disk_usage('/var/lib/docker')
+        if disk.total <= 0: raise OSError('Invalid filesystem size')
+        free_gib = disk.free / 2**30
+        if free_gib < 5 or disk.free / disk.total < 0.15:
+            issues.append('Мало диска на VPS: менее 5 GiB или 15% свободно.')
+        details.append(f'VPS disk free: {free_gib:.1f} GiB')
+    except OSError:
+        issues.append('Не удалось проверить диск Docker на VPS.')
     latest = None
     try:
         latest = read_json(BACKUPS / 'last-success.json')

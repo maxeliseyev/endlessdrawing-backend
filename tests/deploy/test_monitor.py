@@ -156,6 +156,13 @@ class MonitorTests(unittest.TestCase):
             self.assertIsNone(latest)
             self.assertEqual(len(issues),8)
             self.assertNotIn(self.config['TELEGRAM_BOT_TOKEN'],' '.join(issues))
+            # A missing filesystem / malformed probe must still produce an alert, not abort collection.
+            disk.side_effect=OSError('missing filesystem')
+            http.side_effect=None
+            http.return_value.__enter__.return_value.read.return_value=b'[]'
+            issues,_,_=monitor.collect(NOW)
+            self.assertTrue(any('диск Docker' in issue for issue in issues))
+            self.assertTrue(any('readyz' in issue for issue in issues))
 
     def test_manual_config_does_not_poll_or_modify_webhooks_and_needs_receipt_confirmation(self):
         class TtyCapture(io.StringIO):
