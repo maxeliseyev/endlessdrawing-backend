@@ -68,6 +68,8 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: clippy
+      # Browser-integration test and debug server builds reuse compiled dependencies.
+      - uses: Swatinem/rust-cache@v2
       - name: Install browsers for real public/admin integration
         working-directory: frontend-source
         run: npx playwright install --with-deps chromium firefox webkit

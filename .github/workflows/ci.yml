@@ -32,6 +32,8 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt, clippy
+      # Registry and compiled dependencies; saved from main, reused by every run.
+      - uses: Swatinem/rust-cache@v2
       - run: for script in deploy/*.sh; do bash -n "$script"; done
       - run: python3 -m unittest discover -s tests/deploy -v
       - run: ENDLESSDRAWING_IMAGE=endlessdrawing-app:preflight docker compose --env-file deploy/runtime.env.example -f deploy/compose.yml config --quiet

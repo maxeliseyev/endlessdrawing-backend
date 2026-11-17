@@ -1,6 +1,20 @@
 # syntax=docker/dockerfile:1
-FROM rust:1-slim-bookworm AS builder
+# Dependencies are compiled in their own layer (cargo-chef), keyed only by
+# Cargo.toml/Cargo.lock: a source-only change reuses it from the CI layer cache
+# and recompiles just this crate.
+FROM rust:1-slim-bookworm AS chef
+RUN cargo install cargo-chef --locked --version 0.1.78
 WORKDIR /build
+
+FROM chef AS planner
+COPY Cargo.toml Cargo.lock build.rs ./
+COPY migrations ./migrations
+COPY src ./src
+RUN cargo chef prepare --recipe-path recipe.json
+
+FROM chef AS builder
+COPY --from=planner /build/recipe.json recipe.json
+RUN cargo chef cook --locked --release --recipe-path recipe.json
 COPY Cargo.toml Cargo.lock build.rs ./
 COPY migrations ./migrations
 COPY src ./src
