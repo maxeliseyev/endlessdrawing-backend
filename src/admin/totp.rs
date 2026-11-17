@@ -189,7 +189,7 @@ async fn fresh(
         .fetch_one(connection)
         .await?;
     if info.auth_method != "passkey_uv"
-        || now < info.created_at
+        || info.created_at > now + chrono::Duration::seconds(5)
         || (now - info.created_at).num_seconds() >= FRESH_SECONDS
     {
         return Err(AdminError::Forbidden);
@@ -229,7 +229,7 @@ impl AdminService {
         let (_, proof, _) = self.session(headers, false).await?;
         let enabled:bool=sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM admin_totp WHERE account_id=$1 AND encrypted_secret IS NOT NULL)")
             .bind(proof.account_id).fetch_one(&self.0.pool).await?;
-        let recent:bool=sqlx::query_scalar("SELECT auth_method='passkey_uv' AND created_at>clock_timestamp()-interval '5 minutes' FROM admin_sessions WHERE token_digest=$1")
+        let recent:bool=sqlx::query_scalar("SELECT auth_method='passkey_uv' AND created_at<=clock_timestamp()+interval '5 seconds' AND created_at>clock_timestamp()-interval '5 minutes' FROM admin_sessions WHERE token_digest=$1")
             .bind(proof.token_digest.as_slice()).fetch_one(&self.0.pool).await?;
         Ok(Status {
             available: self.0.totp_key.is_some(),
@@ -262,8 +262,8 @@ impl AdminService {
             .try_fill_bytes(secret.as_mut())
             .map_err(|_| AdminError::Unavailable)?;
         let encrypted = encrypt(key, proof.account_id, &self.0.origin, secret.as_slice())?;
-        let expires_at=sqlx::query_scalar("INSERT INTO admin_totp(account_id,pending_secret,pending_expires_at,pending_session_digest) VALUES($1,$2,clock_timestamp()+interval '5 minutes',$3) ON CONFLICT(account_id) DO UPDATE SET pending_secret=EXCLUDED.pending_secret,pending_expires_at=EXCLUDED.pending_expires_at,pending_session_digest=EXCLUDED.pending_session_digest RETURNING pending_expires_at")
-            .bind(proof.account_id).bind(encrypted).bind(proof.token_digest.as_slice()).fetch_one(&mut *tx).await?;
+        let expires_at=sqlx::query_scalar("INSERT INTO admin_totp(account_id,pending_secret,pending_expires_at,pending_session_digest) VALUES($1,$2,LEAST(clock_timestamp()+interval '5 minutes',$4::timestamptz+interval '5 minutes'),$3) ON CONFLICT(account_id) DO UPDATE SET pending_secret=EXCLUDED.pending_secret,pending_expires_at=EXCLUDED.pending_expires_at,pending_session_digest=EXCLUDED.pending_session_digest RETURNING pending_expires_at")
+            .bind(proof.account_id).bind(encrypted).bind(proof.token_digest.as_slice()).bind(info.created_at).fetch_one(&mut *tx).await?;
         auth::audit(&mut tx, Some(proof.account_id), "totp_setup_started").await?;
         tx.commit().await?;
         let secret = BASE32_NOPAD.encode(secret.as_slice());
