@@ -21,14 +21,15 @@ if (( ${#packages[@]} )); then
     apt-get update
     apt-get install -y --no-install-recommends --no-upgrade "${packages[@]}"
 fi
-install -d -o root -g root -m 0700 /etc/endlessdrawing/backup /var/lib/endlessdrawing-backup
+install -d -o root -g root -m 0700 /etc/endlessdrawing/backup /var/lib/endlessdrawing-backup /var/lib/endlessdrawing-monitor
 install -o root -g root -m 0755 "$source_dir/backup.sh" /usr/local/sbin/endlessdrawing-backup-export
 install -o root -g root -m 0755 "$source_dir/backup-storagebox.py" /usr/local/sbin/endlessdrawing-backup
 install -o root -g root -m 0755 "$source_dir/backup-health.py" /usr/local/sbin/endlessdrawing-backup-health
+install -o root -g root -m 0755 "$source_dir/monitor.py" /usr/local/sbin/endlessdrawing-monitor
 if [[ ! -e /etc/endlessdrawing/backup.env ]]; then
     install -o root -g root -m 0600 "$source_dir/backup.env.example" /etc/endlessdrawing/backup.env
 fi
-for unit in endlessdrawing-backup.service endlessdrawing-backup.timer; do
+for unit in endlessdrawing-backup.service endlessdrawing-backup.timer endlessdrawing-monitor.service endlessdrawing-monitor.timer; do
     install -o root -g root -m 0644 "$source_dir/systemd/$unit" "/etc/systemd/system/$unit"
 done
 # Prepared snippets only. No replacement of /etc/caddy/Caddyfile, service reload, or ACME action.
@@ -43,4 +44,5 @@ systemctl daemon-reload
 printf '%s\n' \
     'Operations tools installed; no timers, uploads, Caddy or public ports were enabled.' \
     'Configure the dedicated Storage Box subaccount, age PUBLIC recipient, verified host key and SSH identity.' \
-    'Run a real backup, operator-side decrypt/restore drill and health check before enabling the timer.'
+    'Run a real backup, operator-side decrypt/restore drill and health check before enabling the timer.' \
+    'Telegram monitor is installed but not configured/enabled. Configure only in the owner trusted TTY; never paste its token into chat.'

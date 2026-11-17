@@ -110,6 +110,15 @@ class ExportTests(unittest.TestCase):
         self.assertEqual(metadata["frontend_sha"], "b" * 40)
         self.assertEqual(metadata["database_bytes"], 1048576)
 
+    def test_initialized_totp_key_must_not_silently_disappear_from_backup(self):
+        self.spool.mkdir(exist_ok=True)
+        (self.spool/'totp-key-initialized').touch()
+        result=self.run_script('export')
+        self.assertNotEqual(result.returncode,0)
+        self.assertIn('recovery key',result.stderr)
+        self.assertFalse(any('pg_dump' in ' '.join(args) for args in self.calls()))
+        self.assertFalse(any(self.spool.glob('export-*/READY')))
+
     def test_restore_uses_new_database_and_removes_it_before_success(self):
         bundle = self.export()
         result = self.run_script("verify", bundle)

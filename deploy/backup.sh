@@ -52,6 +52,9 @@ required_kib=$((database_bytes * multiplier / 1024 + 1 + 2097152))
 [[ $available_kib =~ ^[0-9]+$ && $available_kib -ge $required_kib ]] || fail 'Insufficient disk headroom; backup/verification cancelled'
 
 if [[ $operation == export ]]; then
+    if [[ -e $spool/totp-key-initialized && ! -f $app_dir/admin-secrets/totp.key ]]; then
+        fail 'Private TOTP key is missing; refusing a backup without its recovery key'
+    fi
     bundle=$(mktemp -d "$spool/export-$(date -u +%Y%m%dT%H%M%SZ)-XXXXXXXX")
     frontend=$(docker image inspect "$image" -f '{{index .Config.Labels "io.endlessdrawing.frontend-revision"}}' </dev/null 2>> "$log")
     [[ $frontend =~ ^[0-9a-f]{40}$ ]] || fail 'Cannot identify frontend revision; see private operation log'

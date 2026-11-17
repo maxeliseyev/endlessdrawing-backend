@@ -4,7 +4,7 @@ Backend общего бесконечного холста на **Rust + Axum + 
 
 Требования: [backend](docs/backend.md), [JSON-протокол v1](docs/protocol.md), [frontend](docs/frontend.md).
 
-Эксплуатация: [GitHub Actions → закрытый VPS-стенд](docs/deployment.md), [зашифрованные внешние бэкапы](docs/backups.md), [закрытый HTTPS/Caddy](docs/https.md), [gates публичного запуска](docs/publication.md). Модерация: [Admin API](docs/admin-api.md), [закрытый provisioning / Touch ID](docs/admin-operations.md), [совместная интеграция frontend/backend](docs/admin-integration.md).
+Эксплуатация: [GitHub Actions → закрытый VPS-стенд](docs/deployment.md), [зашифрованные внешние бэкапы](docs/backups.md), [Telegram monitoring](docs/monitoring.md), [закрытый HTTPS/Caddy](docs/https.md), [gates публичного запуска](docs/publication.md). Модерация: [Admin API](docs/admin-api.md), [закрытый provisioning / Touch ID](docs/admin-operations.md), [совместная интеграция frontend/backend](docs/admin-integration.md).
 
 ## Текущий этап
 

@@ -1,0 +1,27 @@
+[Unit]
+Description=Endless Drawing private health checks and Telegram alerts
+After=network-online.target docker.service caddy.service
+Wants=network-online.target
+ConditionPathExists=/etc/endlessdrawing/alerts.env
+
+[Service]
+Type=oneshot
+User=root
+Group=root
+UMask=0077
+ExecStart=/usr/local/sbin/endlessdrawing-monitor check
+TimeoutStartSec=90
+Nice=10
+MemoryMax=128M
+CPUQuota=25%
+NoNewPrivileges=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectHome=true
+ProtectSystem=strict
+ReadWritePaths=/var/lib/endlessdrawing-monitor
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6

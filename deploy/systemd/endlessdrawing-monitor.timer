@@ -1,0 +1,11 @@
+[Unit]
+Description=Check Endless Drawing and backup health every 15 minutes
+
+[Timer]
+OnBootSec=2min
+OnUnitActiveSec=15min
+RandomizedDelaySec=30s
+Unit=endlessdrawing-monitor.service
+
+[Install]
+WantedBy=timers.target

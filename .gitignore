@@ -11,3 +11,5 @@ __pycache__/
 /deploy/backup/
 /deploy/admin-secrets/
 /deploy/caddy/caddy.env
+/deploy/alerts.env
+/gettelegramchatid.py

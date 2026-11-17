@@ -3,6 +3,7 @@ Description=Endless Drawing encrypted PostgreSQL backup to isolated Storage Box
 After=docker.service network-online.target
 Wants=network-online.target
 Requires=docker.service
+OnFailure=endlessdrawing-monitor.service
 
 [Service]
 Type=oneshot
