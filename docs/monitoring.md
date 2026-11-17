@@ -30,6 +30,8 @@ sudo /usr/local/sbin/endlessdrawing-deadman configure --chat-id <numeric-chat-id
 
 State — `/var/lib/endlessdrawing-deadman/state.json` (VPS) или `~/.local/share/endlessdrawing-deadman/state.json` (Mac): счётчик неудач + timestamp, без token/chat message bodies. Чат ID не секретен; token в чат не присылать.
 
+**Acceptance 17.11.2026:** владелец установил dead-man на своём отдельном VPS, завершил `configure` и подтвердил тестовую доставку в чат. Агент не имеет доступа ко второму VPS; это подтверждение владельца, независимая проверка с агентской стороны не выполнялась.
+
 ## Что проверяется
 
 Каждые 15 минут (+ до 30s), и сразу по systemd OnFailure backup job:
