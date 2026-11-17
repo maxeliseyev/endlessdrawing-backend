@@ -185,6 +185,7 @@ impl RealtimeSettings {
             ("SNAPSHOT_TIMEOUT_MS", &mut settings.snapshot_timeout),
             ("WS_HEARTBEAT_INTERVAL_MS", &mut settings.heartbeat_interval),
             ("WS_IDLE_TIMEOUT_MS", &mut settings.idle_timeout),
+            ("SPAWN_REFRESH_MS", &mut settings.spawn_refresh),
         ] {
             let millis = positive(lookup, key, target.as_millis() as u64)?;
             *target = Duration::from_millis(millis);
@@ -262,6 +263,7 @@ impl RealtimeSettings {
             ("SNAPSHOT_TIMEOUT_MS", self.snapshot_timeout),
             ("WS_HEARTBEAT_INTERVAL_MS", self.heartbeat_interval),
             ("WS_IDLE_TIMEOUT_MS", self.idle_timeout),
+            ("SPAWN_REFRESH_MS", self.spawn_refresh),
         ] {
             if timeout.is_zero() || timeout > Duration::from_secs(3600) {
                 return Err(invalid(key));

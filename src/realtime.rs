@@ -17,6 +17,7 @@ use crate::{
     domain::{Bounds, StrokeLimits, ValidatedStroke},
     protocol::{AckResult, ErrorCode},
     session::OwnerDigest,
+    spawn::SpawnPoints,
     storage::{self, StorageError, StoredStroke},
 };
 
@@ -28,6 +29,7 @@ pub struct Realtime {
     pub(crate) limits: StrokeLimits,
     pub(crate) connections: Arc<Semaphore>,
     pub(crate) shutdown: CancellationToken,
+    pub(crate) spawn: SpawnPoints,
 }
 
 impl Realtime {
@@ -45,6 +47,8 @@ impl Realtime {
         let (sender, receiver) = mpsc::channel(settings.mutation_queue_capacity);
         let (events, _) = broadcast::channel(settings.event_buffer_capacity);
         let shutdown = CancellationToken::new();
+        let spawn = SpawnPoints::default();
+        spawn.run(pool.clone(), settings.spawn_refresh, shutdown.clone());
         let worker = tokio::spawn(run_writer(pool, receiver, events, shutdown.clone()));
         let service = Self {
             writer: Writer {
@@ -56,6 +60,7 @@ impl Realtime {
             connections: Arc::new(Semaphore::new(settings.max_connections)),
             settings: Arc::new(settings),
             shutdown,
+            spawn,
         };
         Ok((service, worker))
     }

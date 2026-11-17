@@ -76,11 +76,22 @@ pub(crate) enum AckResult {
     },
 }
 
+#[derive(Serialize, Debug, Clone, Copy, PartialEq)]
+pub(crate) struct SpawnPoint {
+    pub x: f64,
+    pub y: f64,
+}
+
 #[derive(Serialize)]
 #[serde(tag = "type")]
 pub(crate) enum ServerMessage {
     #[serde(rename = "hello.ack")]
-    HelloAck { protocol_version: u8 },
+    HelloAck {
+        protocol_version: u8,
+        /// Optional entry hint for a new session (see `spawn.rs`); absent for an empty world.
+        #[serde(skip_serializing_if = "Option::is_none")]
+        spawn: Option<SpawnPoint>,
+    },
     #[serde(rename = "viewport.snapshot.begin")]
     SnapshotBegin { subscription_id: String },
     #[serde(rename = "viewport.snapshot.chunk")]

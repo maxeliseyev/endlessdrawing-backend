@@ -19,7 +19,7 @@ use tokio::{
 
 use crate::{
     domain::Bounds,
-    protocol::{ClientMessage, ErrorCode, ServerMessage, intersects, valid_id},
+    protocol::{ClientMessage, ErrorCode, ServerMessage, SpawnPoint, intersects, valid_id},
     realtime::{Event, Realtime},
     session::OwnerDigest,
     snapshot::SnapshotStream,
@@ -106,6 +106,7 @@ async fn hello(socket: &mut WebSocket, service: &Realtime) -> Option<OwnerDigest
                             socket,
                             &ServerMessage::HelloAck {
                                 protocol_version: 1,
+                                spawn: service.spawn.pick().map(|[x, y]| SpawnPoint { x, y }),
                             },
                             service.settings.send_timeout,
                         )

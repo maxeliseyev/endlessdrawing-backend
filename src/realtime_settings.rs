@@ -23,6 +23,8 @@ pub struct RealtimeSettings {
     pub snapshot_timeout: Duration,
     pub heartbeat_interval: Duration,
     pub idle_timeout: Duration,
+    /// How often new-session entry hints are re-sampled from live strokes.
+    pub spawn_refresh: Duration,
 }
 
 impl Default for RealtimeSettings {
@@ -54,6 +56,7 @@ impl Default for RealtimeSettings {
             snapshot_timeout: Duration::from_secs(30),
             heartbeat_interval: Duration::from_secs(20),
             idle_timeout: Duration::from_secs(60),
+            spawn_refresh: Duration::from_secs(30),
         }
     }
 }

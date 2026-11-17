@@ -125,6 +125,7 @@ Backend раздаёт только содержимое указанного к
 | `SNAPSHOT_TIMEOUT_MS` | `30000` на всю загрузку снимка |
 | `WS_HEARTBEAT_INTERVAL_MS` | `20000` |
 | `WS_IDLE_TIMEOUT_MS` | `60000` без входящих frames |
+| `SPAWN_REFRESH_MS` | `30000` — частота выборки точек входа для `hello.ack.spawn` |
 
 Origin задавать целиком (`https://canvas.example.com`), без пути, `*`, завершающего `/` и credentials. Все таймауты положительные, не более часа; heartbeat должен быть короче idle. Настройки проходят проверку перед стартом. Соединения, очереди и rate limits ограничены сверху 65536; входящие сообщения — 1 MiB, chunk — 4 MiB.
 

@@ -50,6 +50,11 @@ impl Server {
     }
 
     async fn connect(&self, seed: u8) -> Socket {
+        self.connect_with_ack(seed).await.0
+    }
+
+    /// `hello.ack` may carry an optional `spawn` hint once strokes exist.
+    async fn connect_with_ack(&self, seed: u8) -> (Socket, Value) {
         let mut request = self.url.clone().into_client_request().unwrap();
         request
             .headers_mut()
@@ -60,11 +65,15 @@ impl Server {
             json!({"type":"hello", "session_secret":URL_SAFE_NO_PAD.encode([seed; 32])}),
         )
         .await;
-        assert_eq!(
-            receive(&mut socket).await,
-            json!({"type":"hello.ack","protocol_version":1})
+        let ack = receive(&mut socket).await;
+        assert_eq!(ack["type"], "hello.ack");
+        assert_eq!(ack["protocol_version"], 1);
+        let keys: Vec<&String> = ack.as_object().unwrap().keys().collect();
+        assert!(
+            keys.iter()
+                .all(|key| ["type", "protocol_version", "spawn"].contains(&key.as_str()))
         );
-        socket
+        (socket, ack)
     }
 
     async fn stop(&mut self) {
@@ -615,4 +624,53 @@ async fn chisel_and_spray_roundtrip_with_retry_and_snapshot(pool: PgPool) {
     assert_eq!(saved[1]["brush"], "spray");
     assert_eq!(saved[0]["seq"], seqs[0]);
     assert!(saved.iter().all(|stroke| stroke["own"] == true));
+}
+
+#[sqlx::test(migrations = "./migrations")]
+#[ignore = "requires PostgreSQL and DATABASE_URL"]
+async fn new_sessions_get_an_entry_hint_near_live_drawing(pool: PgPool) {
+    let settings = RealtimeSettings {
+        spawn_refresh: Duration::from_millis(50),
+        ..Default::default()
+    };
+    let mut server = Server::start(pool.clone(), settings).await;
+    let (mut author, ack) = server.connect_with_ack(1).await;
+    assert!(ack.get("spawn").is_none(), "an empty world gives no hint");
+    let id = Uuid::new_v4();
+    let mut payload = stroke(id);
+    payload["points"] = json!([[50000, -20000], [50010, -20000]]);
+    create(&mut author, "far", payload).await;
+    let near = |ack: &Value| {
+        let spawn = &ack["spawn"];
+        let (x, y) = (spawn["x"].as_f64().unwrap(), spawn["y"].as_f64().unwrap());
+        (x - 50005.0).abs() <= 400.0 && (y + 20000.0).abs() <= 400.0
+    };
+    let mut hinted = false;
+    for _ in 0..40 {
+        let (_, ack) = server.connect_with_ack(2).await;
+        if ack.get("spawn").is_some() {
+            assert!(near(&ack), "{ack}");
+            hinted = true;
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+    assert!(hinted, "the hint follows the drawing after a refresh");
+    // A deleted stroke stops being an anchor.
+    send(
+        &mut author,
+        json!({"type":"stroke.delete","request_id":"gone","stroke_id":id}),
+    )
+    .await;
+    until(&mut author, "ack").await;
+    let mut cleared = false;
+    for _ in 0..40 {
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        if server.connect_with_ack(3).await.1.get("spawn").is_none() {
+            cleared = true;
+            break;
+        }
+    }
+    assert!(cleared);
+    server.stop().await;
 }

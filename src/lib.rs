@@ -11,5 +11,6 @@ pub mod session;
 mod protocol;
 mod realtime_settings;
 mod snapshot;
+mod spawn;
 mod storage;
 mod ws;
