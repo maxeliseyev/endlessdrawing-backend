@@ -1,6 +1,5 @@
 import importlib.util
 import os
-import stat
 import tempfile
 import unittest
 from pathlib import Path
@@ -9,6 +8,10 @@ DEADMAN = Path(__file__).resolve().parents[2] / 'deploy' / 'deadman-monitor.py'
 spec = importlib.util.spec_from_file_location('deadman', DEADMAN)
 deadman = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(deadman)
+
+TOKEN = '12345:ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefgh'
+GOOD = {'TELEGRAM_BOT_TOKEN': TOKEN, 'TELEGRAM_CHAT_ID': '15494483',
+        'CHECK_TIMEOUT_SECONDS': '15', 'FAILURE_THRESHOLD': '3'}
 
 
 class DeadmanDecisionTests(unittest.TestCase):
@@ -25,11 +28,36 @@ class DeadmanDecisionTests(unittest.TestCase):
         self.assertEqual(deadman.decide(True, 0, threshold), (None, 0))
 
 
-class DeadmanConfTests(unittest.TestCase):
+class DeadmanValidateTests(unittest.TestCase):
+    def test_accepts_valid_config(self):
+        self.assertEqual(deadman.validate(dict(GOOD)), GOOD)
+
+    def test_rejects_invalid_token_chat_id_and_thresholds(self):
+        for patch, field in [
+            ({'TELEGRAM_BOT_TOKEN': 'not-a-token'}, 'token'),
+            ({'TELEGRAM_BOT_TOKEN': '123:short'}, 'token'),
+            ({'TELEGRAM_CHAT_ID': 'abc'}, 'chat'),
+            ({'CHECK_TIMEOUT_SECONDS': '0'}, 'timeout'),
+            ({'FAILURE_THRESHOLD': '0'}, 'threshold'),
+            ({'FAILURE_THRESHOLD': ''}, 'missing threshold'),
+        ]:
+            with self.subTest(field=field):
+                config = dict(GOOD)
+                config.update(patch)
+                with self.assertRaises(deadman.DeadmanError):
+                    deadman.validate(config)
+
+    def test_rejects_unknown_or_missing_fields(self):
+        with self.assertRaises(deadman.DeadmanError):
+            deadman.validate({'TELEGRAM_BOT_TOKEN': TOKEN, 'TELEGRAM_CHAT_ID': '1',
+                              'CHECK_TIMEOUT_SECONDS': '15', 'FAILURE_THRESHOLD': '3', 'EXTRA': 'x'})
+
+
+class DeadmanReadConfigTests(unittest.TestCase):
     def setUp(self):
         self.directory = tempfile.TemporaryDirectory()
         self.root = Path(self.directory.name)
-        self.conf = self.root / 'deadman.conf'
+        self.conf = self.root / 'deadman.env'
 
     def tearDown(self):
         self.directory.cleanup()
@@ -38,27 +66,21 @@ class DeadmanConfTests(unittest.TestCase):
         self.conf.write_text(text)
         os.chmod(self.conf, 0o600)
 
-    def test_rejects_non_owner_or_world_readable_conf(self):
-        self.write_conf('TELEGRAM_CHAT_ID=15494483\nCHECK_TIMEOUT_SECONDS=15\nFAILURE_THRESHOLD=3\n')
+    def test_rejects_world_readable_config(self):
+        self.write_conf('\n'.join(f'{k}={v}' for k, v in GOOD.items()) + '\n')
         self.conf.chmod(0o644)
         with self.assertRaises(deadman.DeadmanError):
-            deadman.read_conf(self.conf)
+            deadman.read_config(self.conf)
 
-    def test_rejects_missing_or_invalid_fields(self):
-        for text in (
-            '',
-            'TELEGRAM_CHAT_ID=abc\nCHECK_TIMEOUT_SECONDS=15\nFAILURE_THRESHOLD=3\n',
-            'TELEGRAM_CHAT_ID=15494483\nCHECK_TIMEOUT_SECONDS=15\n',
-            'TELEGRAM_CHAT_ID=15494483\nCHECK_TIMEOUT_SECONDS=0\nFAILURE_THRESHOLD=3\n',
-        ):
-            with self.subTest(text=text):
-                self.write_conf(text)
-                with self.assertRaises(deadman.DeadmanError):
-                    deadman.read_conf(self.conf)
+    def test_rejects_missing_token_or_threshold(self):
+        lines = {k: v for k, v in GOOD.items() if k != 'TELEGRAM_BOT_TOKEN'}
+        self.write_conf('\n'.join(f'{k}={v}' for k, v in lines.items()) + '\n')
+        with self.assertRaises(deadman.DeadmanError):
+            deadman.read_config(self.conf)
 
-    def test_accepts_valid_conf(self):
-        self.write_conf('TELEGRAM_CHAT_ID=-10015494483\nCHECK_TIMEOUT_SECONDS=15\nFAILURE_THRESHOLD=3\n')
-        self.assertEqual(deadman.read_conf(self.conf)['TELEGRAM_CHAT_ID'], '-10015494483')
+    def test_accepts_valid_private_config(self):
+        self.write_conf('\n'.join(f'{k}={v}' for k, v in GOOD.items()) + '\n')
+        self.assertEqual(deadman.read_config(self.conf), GOOD)
 
 
 if __name__ == '__main__':

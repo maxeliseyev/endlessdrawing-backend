@@ -1,0 +1,27 @@
+[Unit]
+Description=Endless Drawing off-VPS dead-man (public readiness from an independent host)
+After=network-online.target
+Wants=network-online.target
+ConditionPathExists=/etc/endlessdrawing/deadman.env
+
+[Service]
+Type=oneshot
+User=root
+Group=root
+UMask=0077
+ExecStart=/usr/local/sbin/endlessdrawing-deadman check
+TimeoutStartSec=90
+Nice=10
+MemoryMax=128M
+CPUQuota=25%
+NoNewPrivileges=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectHome=true
+ProtectSystem=strict
+ReadWritePaths=/var/lib/endlessdrawing-deadman
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6

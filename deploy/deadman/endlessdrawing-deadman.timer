@@ -1,0 +1,11 @@
+[Unit]
+Description=Check Endless Drawing public readiness from an independent host every 10 minutes
+
+[Timer]
+OnBootSec=2min
+OnUnitActiveSec=10min
+RandomizedDelaySec=20s
+Unit=endlessdrawing-deadman.service
+
+[Install]
+WantedBy=timers.target

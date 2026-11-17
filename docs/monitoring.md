@@ -8,39 +8,27 @@
 
 Это VPS-local watchdog, не независимая проверка полностью выключенного/отрезанного VPS. При падении хоста, сети или самого watchdog сообщения отправить некому. Внешний dead-man/uplink monitor на другом хосте или hosted service остаётся отдельным launch gate. Не обещать уведомление о полном падении машины по одному этому timer.
 
-## Независимый off-VPS dead-man (устройство владельца)
+## Независимый off-VPS dead-man (отдельный всегда-включённый хост)
 
-`deploy/deadman-monitor.py` + `deploy/deadman/endlessdrawing.deadman.plist` — независимая проверка `https://endlessdrawing.com/readyz` с всегда включённого устройства владельца (launchd, каждые 10 минут). Alert только после N подряд неудач, одно восстановление, не спам. Это закрывает «полностью выпал VPS/его сеть»: сообщение шлёт не VPS.
+`deploy/deadman-monitor.py` + systemd units — независимая проверка `https://endlessdrawing.com/readyz` с **другого** хоста (не приложение-VPS). Alert только после N подряд неудач, одно восстановление, не спам. Это закрывает «полностью выпал VPS/его сеть»: сообщение шлёт не приложение-VPS.
 
-Установка (только владелец на своём Mac, token в Keychain, не в chat/CI/репозиторий):
+### Отдельный VPS (предпочтительно: не выключается)
+
+Скопировать на этот хост `deploy/deadman-monitor.py`, `deploy/deadman/endlessdrawing-deadman.service`, `deploy/deadman/endlessdrawing-deadman.timer`, `deploy/install-deadman.sh` (например, `scp` или shallow `git clone` backend). Затем root:
 
 ```bash
-# 1) Скопировать скрипт и поставить launchd agent
-install -m 0755 deploy/deadman-monitor.py /usr/local/bin/endlessdrawing-deadman
-cp deploy/deadman/endlessdrawing.deadman.plist ~/Library/LaunchAgents/
-launchctl load ~/Library/LaunchAgents/endlessdrawing.deadman.plist
-
-# 2) token ТОЛЬКО в macOS Keychain (не argv/env/history)
-security add-generic-password -s endlessdrawing-deadman-token -a owner -w
-# вставить bot token, Enter
-
-# 3) несекретный conf (chat ID + пороги), owner 0600
-install -d -m 0700 ~/.config/endlessdrawing
-cat > ~/.config/endlessdrawing/deadman.conf <<'EOF'
-TELEGRAM_CHAT_ID=15494483
-CHECK_TIMEOUT_SECONDS=15
-FAILURE_THRESHOLD=3
-EOF
-chmod 0600 ~/.config/endlessdrawing/deadman.conf
-
-# 4) тестовая доставка
-/usr/local/bin/endlessdrawing-deadman test
-
-# 5) ручной прогон
-/usr/local/bin/endlessdrawing-deadman check
+sudo bash deploy/install-deadman.sh
+# Только в своём доверенном интерактивном TTY, token скрыт getpass:
+sudo /usr/local/sbin/endlessdrawing-deadman configure --chat-id <numeric-chat-id>
 ```
 
-State — `~/.local/share/endlessdrawing-deadman/state.json` (счётчик неудач + timestamp), без token/chat message bodies. Token читается только `security find-generic-password`, в файлы/логи/argv не пишется. Чат ID не секретен; token в чат не присылать.
+`configure` проверяет @username бота, шлёт тест, требует **yes**, атомарно пишет `/etc/endlessdrawing/deadman.env` (root 0600) и включает `endlessdrawing-deadman.timer` (каждые 10 минут). Проверка: `sudo systemctl list-timers endlessdrawing-deadman.timer`, `sudo /usr/local/sbin/endlessdrawing-deadman test`, `... probe`. Token не в argv/env/history, не в chat/CI.
+
+### macOS (вторично; Mac не всегда включён)
+
+Тот же скрипт, конфиг `~/.config/endlessdrawing/deadman.conf` (owner 0600) вместо `/etc`. Токен пишется через тот же `configure` (не Keychain). Запускается launchd `deploy/deadman/endlessdrawing.deadman.plist` (каждые 10 минут).
+
+State — `/var/lib/endlessdrawing-deadman/state.json` (VPS) или `~/.local/share/endlessdrawing-deadman/state.json` (Mac): счётчик неудач + timestamp, без token/chat message bodies. Чат ID не секретен; token в чат не присылать.
 
 ## Что проверяется
 
@@ -89,4 +77,4 @@ State в `/var/lib/endlessdrawing-monitor/state.json` — только issues/ti
 
 `deploy/install-operations.sh` устанавливает helper и units, но не включает monitor и не создаёт Telegram credentials. Существующий backup timer сохраняется. Config отсутствует → monitor service пропускается по ConditionPathExists, это не «monitoring ready».
 
-Linux safety suite: **66 tests** (53 прежних, role-helper и dead-man conf/decision), privacy/permissions/symlink guards, token/ID parsing, read-only quota, health/expiry/staleness thresholds, failure dedup/recovery/daily policy, no redirects, redacted provider errors, no false success after failed send, TTY-only setup и обязательное ручное подтверждение доставки. Unit tests не подтверждают настоящую Telegram delivery.
+Linux safety suite: **69 tests** (66 прежних, dead-man VPS config/validate/decision), privacy/permissions/symlink guards, token/ID parsing, read-only quota, health/expiry/staleness thresholds, failure dedup/recovery/daily policy, no redirects, redacted provider errors, no false success after failed send, TTY-only setup и обязательное ручное подтверждение доставки. Unit tests не подтверждают настоящую Telegram delivery.
