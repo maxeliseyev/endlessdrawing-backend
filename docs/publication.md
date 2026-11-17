@@ -4,9 +4,9 @@
 
 ## Подтверждено на VPS
 
-- [x] Закрытый combined release через [Actions run 44056125897](https://github.com/maxeliseyev/endlessdrawing-backend/actions/runs/44056125897), все public/admin browser, backup и Caddy gates passed.
-- [x] Backend `ff832e536a8c683481e9740870759c3b1bbd3a54`, frontend `5cc6de756db5ca50f4cc8d745507ae3b85aecd56` подтверждены по image labels. Migrations 1/2/3 successful.
-- [x] Readiness 200, admin HTML 200, login/options 200 (`passkey_uv`); session 401 без входа. Canonical HTTPS admin API включён, accounts при проверке 0; пароль/enrollment capability агент не создавал.
+- [x] Закрытый combined release через [Actions run 44074630461](https://github.com/maxeliseyev/endlessdrawing-backend/actions/runs/44074630461), все public/admin browser, backup и Caddy gates passed.
+- [x] Backend `87fa802849fbdc2defcab3033009c0624edce459`, frontend `b631892eb1667b9c489ec78100c8a7e50b874b28` подтверждены по image labels. Migrations 1/2/3/4 successful; TOTP reserve вместо обязательного второго passkey.
+- [x] Readiness 200, admin HTML 200, login/options 200 (`passkey_uv`); session 401 без входа. Canonical HTTPS admin API включён, сохранён существующий 1 passkey владельца, TOTP пока disabled; реальный login/QR/code ещё проверяет владелец. Пароль/enrollment capability агент не создавал.
 - [x] App только `127.0.0.1:8080`, БД без public port; SSH сохранён. Caddy 2.11.9 active/enabled на 80/443 с доверенным Let's Encrypt TLS; admin endpoint только `127.0.0.1:2019`, API service masked. UFW allow 80/443 существовал ранее и не менялся. Все неразрешённые peers получают 403; явно подтверждённый operator `/32` допущен для закрытой приёмки.
 - [x] Для Storage Box создан отдельный SSH key в `/etc/endlessdrawing/backup/id_ed25519`, без вывода приватного ключа. Это не age identity. Никаких изменений каталога/cron/credentials construct не делалось.
 
@@ -34,12 +34,15 @@
 - [ ] Новая явная политика владельца: **один primary UV passkey + пароль**, Google Authenticator (password+TOTP) — альтернативный резерв вместо обязательного второго passkey. Владелец уже зарегистрировал один passkey; не сбрасывать его. Принять реальный primary login → fresh-UV TOTP setup/confirm → backup login новым кодом → primary login снова. Пароль/QR/secret/codes агент не захватывает. См. [runbook](admin-totp.md).
 - [x] Для закрытой выкладки выбран merged frontend `5cc6de756db5ca50f4cc8d745507ae3b85aecd56` (PR #1), backend migration 0003 уже в main (`1473251`). В отдельном worktree прошли 127 unit, 169 browser mock tests / 2 skips, 3 real public browser tests и real admin HTTPS test. Основной frontend checkout не менялся. Actions выкладка и три реальных браузера по staging HTTPS теперь также passed.
 - [x] Новый reviewed SHA pair прошёл backend CI, public/admin real-browser gates, backup/Caddy smoke и штатную Actions выкладку. Дополнительно реальный staging HTTPS public test прошёл в Chromium/Firefox/WebKit: sync, ownership, reload/undo, chisel/spray. Тестовые штрихи созданы далеко от начальной области и удалены только своим автором (9 tombstones, 0 active test strokes).
-- [ ] Ручная live moderation двумя реальными UI clients с настоящим Touch ID, независимый резерв, reconnect/unknown commit и UX acceptance; virtual admin gate не заменяет это.
+- [ ] Ручная live moderation двумя реальными UI clients с настоящим Touch ID и Google Authenticator резервом, reconnect/unknown commit и UX acceptance; virtual admin gate не заменяет это.
+- [ ] Стабильная WAN public-world приёмка: post-TOTP deploy loopback/CI public 3/3 passed, но live HTTPS прогоны периодически имеют snapshot/pixel/navigation timeouts (наблюдались HTTP 3–10s, единичный SSH reset при здоровом idle сервере). Каждый браузер проходил отдельно/в отдельных прогонах, но стабильного нового полного WAN suite пока нет. Frontend test-only `4cd22e0` добавил authoritative snapshot readiness и общий 120s budget (local 3/3), не меняя deployed JS. Не выдавать это за исправление/нагрузочную приёмку транспорта. После failed live tests остались синтетические штрихи в удалённых случайных областях; перед открытием их нужно отдельно модерационно убрать, не удаляя чужие данные.
 - [x] Новый post-deploy off-site snapshot `20261117T094648Z-a1354607` скачан, расшифрован операторским identity на Mac и восстановлен в изолированный PostgreSQL: migrations 1/2/3, 9 test tombstones, 0 accounts. Plaintext/container удалены; proof сохранён на VPS и у оператора, private identity не переносился.
 - [ ] Разделить maintenance/migration/backup DB role и runtime app role; приложение не должно ходить superuser. Согласовать embedded migrations с этим режимом до переключения.
 - [ ] Trusted proxy/client-IP/rate/connection limits проверены; не превращать X-Forwarded-For в источник прав и не считать shared proxy IP отдельным посетителем.
 - [ ] Dependency audit review по [security-dependencies.md](security-dependencies.md), server/SSH/GitHub hardening, monitoring, backup restore и достаточная ёмкость/профилирование сцены.
 - [ ] Владелец утвердил правила модерации, юрисдикцию и retention tombstones/audit/backup: soft delete скрывает публично, но не удаляет физически данные из archive.
 - [ ] Отдельное явное разрешение снять private gate. Rollback image не восстанавливает БД автоматически.
+
+- [x] TOTP backend/frontend и private server KEK deployed; полноценный post-deploy off-site format-2 round-trip `20261117T120450Z-993e4835` восстановил schema 1/2/3/4 + encryption file. Private key и setup seed не захватывались агентом.
 
 Не ставить галочку по одному успешному `readyz`, HTML `/admin/`, сертификату, mock test или сообщению `--local-only`.

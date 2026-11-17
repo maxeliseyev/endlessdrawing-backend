@@ -1,6 +1,14 @@
 # Совместная проверка и интегрированный staging-релиз
 
-## Новая проверенная и выложенная закрытая пара (17.11.2026)
+## Актуальный TOTP release (17.11.2026)
+
+[Actions 44074630461](https://github.com/maxeliseyev/endlessdrawing-backend/actions/runs/44074630461): backend `87fa802`, frontend `b631892`, migrations 1/2/3/4, API enabled. По явному решению владельца один existing UV passkey достаточен; Google Authenticator — password+TOTP reserve, setup/disable только fresh primary UV session. 72 backend tests, 38 deployment/backup tests, 127 frontend unit и 190 browser tests / 2 skips passed; real HTTPS admin gate теперь также проходит QR setup, code confirmation, TOTP login и запрет factor management через backup session. Только эфемерные fixtures, не настоящие owner seeds.
+
+Existing passkey count 1 сохранён, real TOTP пока disabled. Native trusted production HTTPS browser увидел новую one-passkey форму и backup button без ввода credentials. Post-deploy snapshot `20261117T120450Z-993e4835` восстановлен на Mac вместе с server encryption key; приватный age identity не переносился на VPS.
+
+Live public WAN suite после этой выкладки имеет нестабильные timing/handshake/snapshot failures несмотря на loopback/CI public 3/3; не выдавать отдельные successful browser runs за новый стабильный общий WAN pass. Test-only frontend `4cd22e0` добавил ожидание snapshot readiness и достаточный общий budget; local 3/3 passed, но WAN transport приёмка ещё открыта. Детали/gates — [publication](publication.md), [TOTP](admin-totp.md).
+
+## Предыдущая проверенная и выложенная закрытая пара (17.11.2026)
 
 [Actions run 44056125897](https://github.com/maxeliseyev/endlessdrawing-backend/actions/runs/44056125897) success: backend `ff832e536a8c683481e9740870759c3b1bbd3a54`, frontend `5cc6de756db5ca50f4cc8d745507ae3b85aecd56`, labels/migrations 1/2/3 verified. Canonical admin API enabled: options 200 / session 401 без входа, accounts 0. Дополнительно public integration suite прошёл против **настоящего staging HTTPS/WSS** во всех трёх браузерах: 3/3. Созданы и owner-undo удалены 9 test strokes в случайных удалённых областях; чужие данные не удалялись. Post-deploy off-site decrypt/restore на Mac подтвердил новую схему. Настоящий Touch ID/provisioning остаётся действием владельца.
 

@@ -2,11 +2,11 @@
 
 ## Статус и границы
 
-Текущий закрытый release: [Actions 44056125897](https://github.com/maxeliseyev/endlessdrawing-backend/actions/runs/44056125897) success, backend `ff832e536a8c683481e9740870759c3b1bbd3a54` + frontend `5cc6de756db5ca50f4cc8d745507ae3b85aecd56`. Labels и migrations 1/2/3 подтверждены; admin API включён только на конечном HTTPS origin, аккаунт создаёт владелец отдельно. Caddy 2.11.9 с доверенным Let's Encrypt TLS разрешает только явно подтверждённый operator `/32` и loopback. Это **не публичный запуск**. Подробные gates — [publication](publication.md), [HTTPS](https.md), [backup/restore](backups.md).
+Текущий закрытый release: [Actions 44074630461](https://github.com/maxeliseyev/endlessdrawing-backend/actions/runs/44074630461) success, backend `87fa802849fbdc2defcab3033009c0624edce459` + frontend `b631892eb1667b9c489ec78100c8a7e50b874b28`. Labels и migrations 1/2/3/4 подтверждены; admin API включён только на конечном HTTPS origin. Existing один passkey сохранён; Google Authenticator подключает владелец после fresh primary login. [Новая policy/KEK/restore](admin-totp.md). Caddy 2.11.9 с доверенным Let's Encrypt TLS разрешает только явно подтверждённый operator `/32` и loopback. Это **не публичный запуск**. Подробные gates — [publication](publication.md), [HTTPS](https.md), [backup/restore](backups.md).
 
 VPS: `subwhale@212.147.244.161`, Linux amd64, Ubuntu 26.04.1, 2 vCPU, 8 ГБ RAM, диск 40 ГБ (на момент проверки свободно около 35 ГБ). Для начального закрытого стенда достаточно; диск и размер БД/бэкапов контролировать.
 
-Frontend: `https://github.com/maxeliseyev/endlessdrawing-frontend`, локально `../endless-drawing-frontend`. Выбран merged PR #1 (`5cc6de7`): **общий публичный WS-холст** и отдельный admin UI. Реальные public tests прошли в Chromium/Firefox/WebKit как локально, так и по настоящему staging HTTPS; реальный admin HTTPS/API/WS/DB gate использует виртуальные UV authenticators. Настоящий Touch ID и независимый резерв ещё проверяет владелец. Основной frontend checkout не переключался: проверки нового commit выполнялись в отдельном detached worktree.
+Frontend: `https://github.com/maxeliseyev/endlessdrawing-frontend`, локально `../endless-drawing-frontend`. Выбран merged PR #1 (`5cc6de7`): **общий публичный WS-холст** и отдельный admin UI. Реальные public tests прошли в Chromium/Firefox/WebKit локально/CI и на предыдущей staging HTTPS выкладке; после актуальной выкладки WAN suite нестабилен по readiness/navigation timeout — отдельный незакрытый gate, см. publication.  реальный admin HTTPS/API/WS/DB gate использует виртуальные UV authenticators. Настоящий Touch ID и независимый резерв ещё проверяет владелец. Основной frontend checkout не переключался: проверки нового commit выполнялись в отдельном detached worktree.
 
 Стенд намеренно закрыт: backend слушает только `127.0.0.1:8080` на VPS, PostgreSQL вообще без published ports. Caddy принимает 80/443, но неразрешённые peers получают 403 даже со spoofed forwarded headers. Backend подключён к bridge `edge` для loopback-publishing и к внутренней `private` для БД; PostgreSQL подключён только к `private`. Требования до публичного запуска — [модерация](moderation.md), TLS и внешние проверенные бэкапы.
 
@@ -165,7 +165,7 @@ Pre-deploy dump создаётся до запуска миграций. `pg_res
 ## 6. До публичного endlessdrawing.com
 
 - Public WS и три браузера по настоящему HTTPS уже проверены; физические iPhone/iPad и нагрузка остаются отдельной приёмкой.
-- Владелец должен принять настоящие Touch ID/резерв и [модерацию с MFA](moderation.md); `/admin/` не публичная продуктовая страница.
+- Владелец должен принять настоящий primary Touch ID / Google Authenticator резерв и [модерацию с MFA](moderation.md); `/admin/` не публичная продуктовая страница.
 - DNS сейчас only → VPS, доверенный HTTPS/Caddy/private gate настроены; Cloudflare proxy не включать обратно без review Origin, WebSocket, Full (strict), caching и trusted client IP.
 - Exact HTTPS `ALLOWED_ORIGINS` уже применён; backend не опубликован напрямую. Trusted forwarded IP/rate limits перед снятием gate ещё проверить.
 - Ограничить подключения/логин/модерацию по IP, защитить SSH, проверить firewall. Не отключать существующий доступ SSH при автоматизации.

@@ -1,5 +1,13 @@
 # Google Authenticator: резерв вместо второго passkey
 
+## Подтверждённая выкладка
+
+[Actions 44074630461](https://github.com/maxeliseyev/endlessdrawing-backend/actions/runs/44074630461) success: backend `87fa802849fbdc2defcab3033009c0624edce459`, frontend `b631892eb1667b9c489ec78100c8a7e50b874b28`. Migrations 1/2/3/4 applied, image labels checked; существующий единственный passkey сохранён, TOTP ещё не подключён владельцем. Native trusted-HTTPS browser проверил новый вход/подсказки/backup button без ввода реальных credentials. Private KEK read-only mount проверен, raw key не печатался.
+
+72 backend tests (20 admin), fmt/Clippy, 38 deployment/backup tests, 127 frontend unit, 190 browser tests / 2 CDP skips, real HTTPS UV + QR + TOTP login integration passed. Аутентификаторы и TOTP seeds в автотестах только эфемерные fixtures. Dependency audit по-прежнему имеет прежние 3 findings / 2 advisories, новых игноров нет.
+
+Post-deploy off-site snapshot `20261117T120450Z-993e4835` скачан, age-decrypted на Mac и восстановлен в isolated PostgreSQL: migrations 1/2/3/4 и **тот же 32-byte KEK** восстановлены/проверены по checksums. Plaintext/container удалены; nonsensitive proof на VPS/у оператора, private age identity не переносился.
+
 Решение владельца 17.11.2026: обычный вход **логин + пароль + один UV passkey / Touch ID**, резервный **логин + пароль + TOTP**. Второй passkey больше не обязателен. Password-only входа нет. TOTP фишингу подвержен сильнее, чем WebAuthn; это осознанный альтернативный резерв, а не ещё один шаг после Touch ID. Не открывать публичный gate автоматически.
 
 ## API (расширение admin-api.md)
