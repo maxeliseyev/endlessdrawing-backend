@@ -564,3 +564,55 @@ async fn bounds_connections_payload_and_hello_wait(pool: PgPool) {
     assert_eq!(count, 0);
     server.stop().await;
 }
+
+#[sqlx::test(migrations = "./migrations")]
+#[ignore = "requires PostgreSQL and DATABASE_URL"]
+async fn chisel_and_spray_roundtrip_with_retry_and_snapshot(pool: PgPool) {
+    let server = Server::start(pool.clone(), RealtimeSettings::default()).await;
+    let mut author = server.connect(1).await;
+    let mut visitor = server.connect(2).await;
+    assert!(subscribe(&mut author, "a1").await.is_empty());
+    assert!(subscribe(&mut visitor, "b1").await.is_empty());
+    let mut seqs = Vec::new();
+    for (index, brush) in ["chisel", "spray"].into_iter().enumerate() {
+        let id = Uuid::new_v4();
+        let mut payload = stroke(id);
+        payload["brush"] = json!(brush);
+        payload["width"] = json!(64);
+        let ack = create(&mut author, &format!("c{index}"), payload.clone()).await;
+        assert_eq!(ack["stroke"]["brush"], brush);
+        let points: Vec<[f64; 2]> =
+            serde_json::from_value(ack["stroke"]["points"].clone()).unwrap();
+        assert_eq!(points, vec![[0.0, 0.0], [10.0, 5.0]]);
+        let event = until(&mut visitor, "stroke.created").await;
+        assert_eq!(event["stroke"]["brush"], brush);
+        assert_eq!(event["stroke"]["own"], false);
+        // A retry with the same UUID/content returns the same object and seq.
+        let retry = create(&mut author, &format!("retry{index}"), payload.clone()).await;
+        assert_eq!(retry["stroke"]["seq"], ack["stroke"]["seq"]);
+        // Same UUID with another brush is a conflict, never a silent rewrite.
+        // Checked once: five creates stay inside the 5/s create limit.
+        if index == 0 {
+            payload["brush"] = json!("round");
+            send(
+                &mut author,
+                json!({"type":"stroke.create","request_id":format!("conflict{index}"),"stroke":payload}),
+            )
+            .await;
+            let mut conflict = receive(&mut author).await;
+            while conflict["type"] != "error" {
+                conflict = receive(&mut author).await;
+            }
+            assert_eq!(conflict["code"], "id_conflict");
+        }
+        seqs.push(ack["stroke"]["seq"].clone());
+    }
+    author.close(None).await.unwrap();
+    let mut reloaded = server.connect(1).await;
+    let saved = subscribe(&mut reloaded, "reload").await;
+    assert_eq!(saved.len(), 2);
+    assert_eq!(saved[0]["brush"], "chisel");
+    assert_eq!(saved[1]["brush"], "spray");
+    assert_eq!(saved[0]["seq"], seqs[0]);
+    assert!(saved.iter().all(|stroke| stroke["own"] == true));
+}

@@ -58,14 +58,10 @@ impl TryFrom<StrokeRow> for StoredStroke {
     type Error = sqlx::Error;
 
     fn try_from(row: StrokeRow) -> Result<Self, Self::Error> {
-        let brush = match row.brush.as_str() {
-            "round" => Brush::Round,
-            "square" => Brush::Square,
-            _ => {
-                return Err(sqlx::Error::Decode(
-                    std::io::Error::other("invalid stored brush").into(),
-                ));
-            }
+        let Some(brush) = Brush::from_stored(&row.brush) else {
+            return Err(sqlx::Error::Decode(
+                std::io::Error::other("invalid stored brush").into(),
+            ));
         };
         Ok(Self {
             input: StrokeInput {
@@ -131,10 +127,7 @@ pub(crate) async fn create(
         return Ok((existing, false));
     }
     let bounds = stroke.bounds();
-    let brush = match input.brush {
-        Brush::Round => "round",
-        Brush::Square => "square",
-    };
+    let brush = input.brush.as_str();
     let query = format!(
         "INSERT INTO strokes (id, owner_digest, points, brush, width, color, opacity, bounds)
          VALUES ($1, $2, $3, $4, $5, $6, $7, box(point($8, $9), point($10, $11)))

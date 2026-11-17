@@ -26,7 +26,7 @@ Backend общего бесконечного холста на **Rust + Axum + 
 
 Подготовлен ручной Actions workflow: проверка backend, checkout/build отдельного frontend, один Docker-образ, container smoke-test, SSH-доставка, локальный pre-deploy backup и health-checked активация/попытка image rollback. Стенд закрыт на loopback; серверный bootstrap выполнен, Docker CE и helper preflight проверены. По сообщению владельца приложение доступно через SSH-туннель; это не подтверждает shared persistence локального frontend-прототипа. Новая модерация на VPS не активирована.
 
-Frontend `/admin/` реализован и прошёл совместный Chromium → HTTPS → backend/PostgreSQL тест с виртуальными UV passkeys; перед выкладкой это обязательный Actions gate. **Следующий этап:** настоящий Touch ID на доверенном закрытом HTTPS-стенде, public frontend realtime, review [замечаний зависимостей](docs/security-dependencies.md), ограничения по IP и внешние бэкапы. Текущий frontend ещё локальный прототип без WS: его выкладка не означает готовность shared world. До завершения этих этапов сервис не предназначен для публичного запуска. Отдельная HTTP-ручка выборки/изменения штрихов не реализуется: основной путь — WebSocket.
+Frontend `/admin/` реализован и прошёл совместный Chromium → HTTPS → backend/PostgreSQL тест с виртуальными UV passkeys; перед выкладкой это обязательный Actions gate. **Следующий этап:** настоящий Touch ID на доверенном закрытом HTTPS-стенде, public frontend realtime, review [замечаний зависимостей](docs/security-dependencies.md), ограничения по IP и внешние бэкапы. Публичный frontend теперь подключён к `/ws` (create/delete/undo/reconnect) и прошёл совместный тест с этим backend и PostgreSQL в Chromium/Firefox/WebKit (`npm run test:integration` во frontend); это локальная проверка, не production-нагрузка. До завершения этих этапов сервис не предназначен для публичного запуска. Отдельная HTTP-ручка выборки/изменения штрихов не реализуется: основной путь — WebSocket.
 
 Rust-пакет оставлен в корне отдельного backend-репозитория, без дополнительной папки `backend/`.
 
@@ -75,7 +75,7 @@ curl -i http://127.0.0.1:3000/readyz
 
 `STROKE_MAX_SPAN=100000` — выбранный начальный защитный предел, не фиксированное число исходного ТЗ. Перед интеграцией согласовать его с frontend. Ширина `[1,64]`, opacity `(0,1]`, диапазон координат `[-1e9,1e9]` фиксированы контрактом.
 
-Для квадратных концов реализован консервативный запас bbox `width / sqrt(2) + 1`, для круглых — `width / 2 + 1`, согласно предлагаемым геометрическим договорённостям в `docs/protocol.md`. Настройки renderer обе команды ещё должны принять совместно.
+Кисти: `round`, `square`, `chisel`, `spray` (миграция `0003_chisel_spray_brushes.sql`). Для квадратных концов и косого пера реализован консервативный запас bbox `width / sqrt(2) + 1`, для круглых и спрея — `width / 2 + 1`, согласно предлагаемым геометрическим договорённостям в `docs/protocol.md`. Настройки renderer обе команды ещё должны принять совместно.
 
 `POSTGRES_DB`, `POSTGRES_USER`, `POSTGRES_PASSWORD`, `POSTGRES_PORT` используются Compose. В `.env.example` они согласованы с `DATABASE_URL`; при изменении логина/пароля/порта обновить URL тоже. Переменные инициализации PostgreSQL действуют при создании **пустого** volume, а не меняют учётные данные существующей БД.
 
@@ -160,7 +160,7 @@ SQLx создаёт отдельную временную БД для каждо
 
 Проверяются валидация и bbox, строгий входной payload, секрет сессии, конфигурация без утечек, probes/статика, миграции и индексы, JSONB/box, выборка со страницами, soft delete и ограничения БД. Realtime-тесты проверяют два независимых клиента, reload/ownership, чужое удаление, повтор UUID/конфликт/tombstone, offscreen ack, byte-bounded chunks, смену подписки, snapshot при create/delete, overflow буфера, отсутствие событий при rollback, последовательность параллельных мутаций, Origin/hello/payload/connection/rate limits.
 
-Проверены 63 стандартных backend-теста, включая 16 admin-тестов, плюс отдельный совместный browser integration test: реальные ES256-подписи программных аутентификаторов, UV/RP/challenge/replay/expiry, синхронизируемые passkeys с нулевым counter, конкурентный verify, logout/recovery перед queued hide, атомарность аудита и COMMIT failure → resync/retry. Это не проверка настоящего Touch ID или браузерной интеграции. `cargo audit` пока сообщает транзитивные advisories: [оценка и ограничения](docs/security-dependencies.md).
+Проверены 66 стандартных backend-тестов, включая 16 admin-тестов и WS round-trip/retry/conflict/snapshot для `chisel`/`spray`, плюс отдельный совместный browser integration test: реальные ES256-подписи программных аутентификаторов, UV/RP/challenge/replay/expiry, синхронизируемые passkeys с нулевым counter, конкурентный verify, logout/recovery перед queued hide, атомарность аудита и COMMIT failure → resync/retry. Это не проверка настоящего Touch ID или браузерной интеграции. `cargo audit` пока сообщает транзитивные advisories: [оценка и ограничения](docs/security-dependencies.md).
 
 CI выполняет тот же полный Rust-набор с PostgreSQL 17 и тесты deployment helper (mock Docker, не реальная БД). Deploy workflow дополнительно проверяет frontend check/unit/build и запускает собранный amd64-образ с одноразовым PostgreSQL через production Compose.
 

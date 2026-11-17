@@ -33,10 +33,7 @@ async fn insert(pool: &PgPool, input: StrokeInput, digest: &OwnerDigest) -> i64 
     let validated = input.validate(StrokeLimits::default()).unwrap();
     let bounds = validated.bounds();
     let input = validated.input();
-    let brush = match input.brush {
-        Brush::Round => "round",
-        Brush::Square => "square",
-    };
+    let brush = input.brush.as_str();
     sqlx::query_scalar(
         "INSERT INTO strokes (id, owner_digest, points, brush, width, color, opacity, bounds)
          VALUES ($1, $2, $3, $4, $5, $6, $7, box(point($8, $9), point($10, $11)))

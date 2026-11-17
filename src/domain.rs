@@ -16,6 +16,33 @@ pub enum Brush {
     Round,
     /// Square caps with bevel joins; a single point is an axis-aligned square.
     Square,
+    /// Flat calligraphic nib fixed at -45 degrees in world space, swept between points.
+    Chisel,
+    /// Deterministic particle cloud seeded by the lowercase stroke UUID (spray v1).
+    Spray,
+}
+
+impl Brush {
+    /// Wire and database representation.
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Round => "round",
+            Self::Square => "square",
+            Self::Chisel => "chisel",
+            Self::Spray => "spray",
+        }
+    }
+
+    /// Parses a stored database value; unknown values are rejected, never defaulted.
+    pub fn from_stored(value: &str) -> Option<Self> {
+        match value {
+            "round" => Some(Self::Round),
+            "square" => Some(Self::Square),
+            "chisel" => Some(Self::Chisel),
+            "spray" => Some(Self::Spray),
+            _ => None,
+        }
+    }
 }
 
 /// Untrusted client payload. Validation is required before storage.
@@ -183,9 +210,11 @@ impl StrokeInput {
         }
 
         // Diagonal square caps protrude farther on an axis than width / 2.
+        // A -45 degree chisel nib of length `width` fits the same conservative
+        // square extent; spray particles stay inside a disc of diameter `width`.
         let padding = match self.brush {
-            Brush::Round => self.width / 2.0,
-            Brush::Square => self.width / std::f64::consts::SQRT_2,
+            Brush::Round | Brush::Spray => self.width / 2.0,
+            Brush::Square | Brush::Chisel => self.width / std::f64::consts::SQRT_2,
         } + BOUNDS_EPSILON;
         bounds.min_x -= padding;
         bounds.min_y -= padding;
@@ -236,8 +265,8 @@ mod tests {
     }
 
     #[test]
-    fn single_point_has_nonempty_bounds_for_both_brushes() {
-        for brush in [Brush::Round, Brush::Square] {
+    fn single_point_has_nonempty_bounds_for_every_brush() {
+        for brush in [Brush::Round, Brush::Square, Brush::Chisel, Brush::Spray] {
             let mut input = stroke();
             input.points = vec![[4.0, -5.0]];
             input.brush = brush;
@@ -259,6 +288,41 @@ mod tests {
         assert!(bounds.min_y < -cap_extent);
         assert!(bounds.max_x > 10.0 + cap_extent);
         assert!(bounds.max_y > 10.0 + cap_extent);
+    }
+
+    #[test]
+    fn chisel_nib_and_spray_disc_fit_inside_bounds() {
+        let width: f64 = 64.0;
+        let mut input = stroke();
+        input.points = vec![[0.0, 0.0]];
+        input.width = width;
+        input.brush = Brush::Chisel;
+        let bounds = input
+            .clone()
+            .validate(StrokeLimits::default())
+            .unwrap()
+            .bounds();
+        // Nib corners: half-length along (1,-1)/sqrt2 plus half-thickness across it.
+        let thickness = (width / 6.0).max(1.0);
+        let nib_extent = (width + thickness) / (2.0 * std::f64::consts::SQRT_2);
+        assert!(bounds.min_x < -nib_extent && bounds.max_x > nib_extent);
+        assert!(bounds.min_y < -nib_extent && bounds.max_y > nib_extent);
+        input.brush = Brush::Spray;
+        let bounds = input.validate(StrokeLimits::default()).unwrap().bounds();
+        assert!(bounds.min_x < -width / 2.0 && bounds.max_x > width / 2.0);
+        assert!(bounds.min_y < -width / 2.0 && bounds.max_y > width / 2.0);
+    }
+
+    #[test]
+    fn brush_names_roundtrip_through_storage_and_json() {
+        for brush in [Brush::Round, Brush::Square, Brush::Chisel, Brush::Spray] {
+            assert_eq!(Brush::from_stored(brush.as_str()), Some(brush));
+            assert_eq!(
+                serde_json::to_value(brush).unwrap(),
+                serde_json::json!(brush.as_str())
+            );
+        }
+        assert_eq!(Brush::from_stored("Round"), None);
     }
 
     #[test]

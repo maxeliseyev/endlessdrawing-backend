@@ -1,4 +1,6 @@
-# Следующий этап после админки: chisel и spray
+# Кисти chisel и spray
+
+**Статус (16.11.2026): реализовано.** Enum/JSON/storage (`Brush::as_str`/`from_stored`), миграция `0003_chisel_spray_brushes.sql`, bounds и тесты: unit (bounds, имена), WS (create, идемпотентный retry, `id_conflict` при смене brush, snapshot после reload). Совместная браузерная проверка с frontend пройдена локально. Ниже — исходный план, оставлен как справка.
 
 Запрос владельца зафиксирован. Источник поведения и алгоритма: `../endless-drawing-frontend/docs/brushes.md` от корня backend-репозитория. Сейчас frontend поддерживает эти формы локально; backend пока принимает только round/square. Этот документ не объявляет новые значения доступными в API.
 
