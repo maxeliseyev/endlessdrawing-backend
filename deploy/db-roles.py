@@ -20,7 +20,7 @@ import shlex
 import subprocess
 import sys
 import tempfile
-from urllib.parse import quote, urlsplit
+from urllib.parse import quote, unquote, urlsplit
 
 APP=Path(os.environ.get('ENDLESSDRAWING_APP_DIR','/opt/endlessdrawing'))
 CONFIG=Path(os.environ.get('ENDLESSDRAWING_CONFIG_DIR','/etc/endlessdrawing'))
@@ -90,6 +90,8 @@ def main():
                 return result.stdout.decode().strip()
             current=urlsplit(values['DATABASE_URL'])
             db=values['POSTGRES_DB']
+            if current.hostname!='postgres' or (current.port or 5432)!=5432 or unquote(current.path.lstrip('/'))!=db or sql('SELECT current_database()')!=db:
+                raise RoleError('Runtime URI, configured database and live maintenance database must match')
             if args.operation=='status':
                 result=sql("SELECT json_build_object('role',rolname,'superuser',rolsuper,'createdb',rolcreatedb,'createrole',rolcreaterole,'replication',rolreplication,'bypassrls',rolbypassrls) FROM pg_roles WHERE rolname IN ('canvas_app','canvas_migrator');")
                 print(result or 'Dedicated roles not prepared')

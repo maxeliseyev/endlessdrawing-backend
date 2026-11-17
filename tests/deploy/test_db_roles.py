@@ -41,7 +41,8 @@ class RoleSetupTests(unittest.TestCase):
             return types.SimpleNamespace(returncode=0 if self.login_ok else 1,stdout=b't\n' if self.login_ok else b'')
         query=kwargs['input'].decode()
         result=''
-        if 'SELECT rolsuper' in query: result='t'
+        if 'SELECT current_database()' in query: result='canvas'
+        elif 'SELECT rolsuper' in query: result='t'
         elif 'SHOW log_statement' in query: result='none'
         elif 'SELECT count(*) FROM pg_roles' in query: result='1' if self.existing_roles else '0'
         elif 'SELECT count(*) FROM pg_auth_members' in query: result='0'
@@ -98,6 +99,12 @@ class RoleSetupTests(unittest.TestCase):
         self.assertEqual(len(backups),1); self.assertEqual(backups[0].read_text(),before)
         self.assertEqual(stat.S_IMODE(backups[0].stat().st_mode),0o600)
         with self.assertRaises(roles.RoleError): self.invoke('prepare')
+
+    def test_mismatched_runtime_database_refused_before_role_changes(self):
+        self.runtime.write_text(self.original.replace('@postgres:5432/canvas','@postgres:5432/other'))
+        with self.assertRaises(roles.RoleError): self.invoke('prepare')
+        self.assertFalse((self.config/'db-role-state.json').exists())
+        self.assertFalse(any(b'ALTER ROLE' in body for _,body in self.calls))
 
     def test_unknown_existing_roles_are_not_overwritten(self):
         self.existing_roles=True
