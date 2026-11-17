@@ -111,6 +111,12 @@ jobs:
         run: |
           docker image load --input "$IMAGE_ARCHIVE"
           python3 tests/deploy/smoke_container.py "endlessdrawing-app:$RELEASE_ID" --expected-arch amd64
+      - name: Verify backup recovery and private Caddy gate locally
+        env:
+          RELEASE_ID: ${{ steps.metadata.outputs.release }}
+        run: |
+          python3 tests/deploy/smoke_backup.py "endlessdrawing-app:$RELEASE_ID"
+          python3 tests/deploy/smoke_caddy.py
       - name: Compress image for SSH transport
         env:
           IMAGE_ARCHIVE: ${{ runner.temp }}/endlessdrawing-image.tar

@@ -1,0 +1,5 @@
+# Default: only actual loopback peers. Every external peer is denied, including Cloudflare.
+# Root operator may explicitly allow their own current public IP for HTTPS acceptance.
+# Never trust a caller-supplied X-Forwarded-For or whitelist Cloudflare ranges to bypass this.
+@endlessdrawing_outside not remote_ip {$ENDLESSDRAWING_ALLOWED_IPS:127.0.0.1/32 ::1/128}
+respond @endlessdrawing_outside "Private staging" 403

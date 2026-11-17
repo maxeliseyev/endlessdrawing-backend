@@ -4,7 +4,7 @@ Backend общего бесконечного холста на **Rust + Axum + 
 
 Требования: [backend](docs/backend.md), [JSON-протокол v1](docs/protocol.md), [frontend](docs/frontend.md).
 
-Эксплуатация: [GitHub Actions → закрытый VPS-стенд](docs/deployment.md). Модерация: [Admin API](docs/admin-api.md), [закрытый provisioning / Touch ID](docs/admin-operations.md), [совместная интеграция frontend/backend](docs/admin-integration.md).
+Эксплуатация: [GitHub Actions → закрытый VPS-стенд](docs/deployment.md), [зашифрованные внешние бэкапы](docs/backups.md), [закрытый HTTPS/Caddy](docs/https.md), [gates публичного запуска](docs/publication.md). Модерация: [Admin API](docs/admin-api.md), [закрытый provisioning / Touch ID](docs/admin-operations.md), [совместная интеграция frontend/backend](docs/admin-integration.md).
 
 ## Текущий этап
 
@@ -26,7 +26,7 @@ Backend общего бесконечного холста на **Rust + Axum + 
 
 Подготовлен ручной Actions workflow: проверка backend, checkout/build отдельного frontend, один Docker-образ, container smoke-test, SSH-доставка, локальный pre-deploy backup и health-checked активация/попытка image rollback. Стенд закрыт на loopback; серверный bootstrap выполнен, Docker CE и helper preflight проверены. По сообщению владельца приложение доступно через SSH-туннель; это не подтверждает shared persistence локального frontend-прототипа. Новая модерация на VPS не активирована.
 
-Frontend `/admin/` реализован и прошёл совместный Chromium → HTTPS → backend/PostgreSQL тест с виртуальными UV passkeys; перед выкладкой это обязательный Actions gate. **Следующий этап:** настоящий Touch ID на доверенном закрытом HTTPS-стенде, public frontend realtime, review [замечаний зависимостей](docs/security-dependencies.md), ограничения по IP и внешние бэкапы. Публичный frontend теперь подключён к `/ws` (create/delete/undo/reconnect) и прошёл совместный тест с этим backend и PostgreSQL в Chromium/Firefox/WebKit (`npm run test:integration` во frontend); это локальная проверка, не production-нагрузка. До завершения этих этапов сервис не предназначен для публичного запуска. Отдельная HTTP-ручка выборки/изменения штрихов не реализуется: основной путь — WebSocket.
+Frontend `/admin/` реализован и прошёл совместный Chromium → HTTPS → backend/PostgreSQL тест с виртуальными UV passkeys; перед выкладкой это обязательный Actions gate. **Следующий этап:** настоящий Touch ID на доверенном закрытом HTTPS-стенде, public frontend realtime, review [замечаний зависимостей](docs/security-dependencies.md) и ограничения по IP. Внешние age-бэкапы в отдельный Storage Box subaccount уже активированы после настоящего operator decrypt/restore; мониторинг алертов и provider deletion protection остаются отдельными gates. Публичный frontend теперь подключён к `/ws` (create/delete/undo/reconnect) и прошёл совместный тест с этим backend и PostgreSQL в Chromium/Firefox/WebKit (`npm run test:integration` во frontend); это локальная проверка, не production-нагрузка. До завершения этих этапов сервис не предназначен для публичного запуска. Отдельная HTTP-ручка выборки/изменения штрихов не реализуется: основной путь — WebSocket.
 
 Rust-пакет оставлен в корне отдельного backend-репозитория, без дополнительной папки `backend/`.
 

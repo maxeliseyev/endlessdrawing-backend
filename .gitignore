@@ -7,3 +7,6 @@
 /release-artifact/
 __pycache__/
 /deploy/runtime.env
+/deploy/backup.env
+/deploy/backup/
+/deploy/caddy/caddy.env

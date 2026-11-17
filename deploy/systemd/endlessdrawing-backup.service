@@ -1,0 +1,30 @@
+[Unit]
+Description=Endless Drawing encrypted PostgreSQL backup to isolated Storage Box
+After=docker.service network-online.target
+Wants=network-online.target
+Requires=docker.service
+
+[Service]
+Type=oneshot
+User=root
+Group=root
+UMask=0077
+ExecStart=/usr/local/sbin/endlessdrawing-backup
+TimeoutStartSec=1h
+TimeoutStopSec=90
+Nice=10
+IOSchedulingClass=best-effort
+IOSchedulingPriority=7
+MemoryMax=384M
+CPUQuota=50%
+NoNewPrivileges=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectHome=true
+ProtectSystem=strict
+ReadWritePaths=/var/lib/endlessdrawing-backup /opt/endlessdrawing
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
