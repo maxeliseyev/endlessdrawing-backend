@@ -28,6 +28,8 @@ pub struct Realtime {
     pub(crate) settings: Arc<RealtimeSettings>,
     pub(crate) limits: StrokeLimits,
     pub(crate) connections: Arc<Semaphore>,
+    pub(crate) manifest_slots: Arc<Semaphore>,
+    pub(crate) pool: PgPool,
     pub(crate) shutdown: CancellationToken,
     pub(crate) spawn: SpawnPoints,
 }
@@ -49,7 +51,7 @@ impl Realtime {
         let shutdown = CancellationToken::new();
         let spawn = SpawnPoints::default();
         spawn.run(pool.clone(), settings.spawn_refresh, shutdown.clone());
-        let worker = tokio::spawn(run_writer(pool, receiver, events, shutdown.clone()));
+        let worker = tokio::spawn(run_writer(pool.clone(), receiver, events, shutdown.clone()));
         let service = Self {
             writer: Writer {
                 sender,
@@ -57,6 +59,8 @@ impl Realtime {
                 shutdown: shutdown.clone(),
             },
             limits,
+            pool,
+            manifest_slots: Arc::new(Semaphore::new(crate::manifest::MAX_CONCURRENT)),
             connections: Arc::new(Semaphore::new(settings.max_connections)),
             settings: Arc::new(settings),
             shutdown,

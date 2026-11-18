@@ -107,6 +107,7 @@ async fn receive(socket: &mut Socket) -> Value {
         loop {
             match socket.next().await.unwrap().unwrap() {
                 Message::Text(text) => return serde_json::from_str(&text).unwrap(),
+                Message::Binary(bytes) => return rmp_serde::from_slice(&bytes).unwrap(),
                 Message::Ping(data) => socket.send(Message::Pong(data)).await.unwrap(),
                 other => panic!("unexpected frame: {other:?}"),
             }
@@ -674,3 +675,7 @@ async fn new_sessions_get_an_entry_hint_near_live_drawing(pool: PgPool) {
     assert!(cleared);
     server.stop().await;
 }
+
+include!("support/msgpack.rs");
+
+include!("support/manifest.rs");

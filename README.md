@@ -2,7 +2,7 @@
 
 Backend общего бесконечного холста на **Rust + Axum + Tokio + SQLx + PostgreSQL**.
 
-Требования: [backend](docs/backend.md), [JSON-протокол v1](docs/protocol.md), [frontend](docs/frontend.md).
+Требования: [backend](docs/backend.md), [JSON-протокол v1](docs/protocol.md), [MessagePack v2](docs/protocol-v2-msgpack.md), [frontend](docs/frontend.md).
 
 Эксплуатация: [GitHub Actions → закрытый VPS-стенд](docs/deployment.md), [зашифрованные внешние бэкапы](docs/backups.md), [Telegram monitoring](docs/monitoring.md), [least-privilege DB roles](docs/database-roles.md), [закрытый HTTPS/Caddy](docs/https.md), [gates публичного запуска](docs/publication.md). Модерация: [Admin API](docs/admin-api.md), [закрытый provisioning / Touch ID](docs/admin-operations.md), [совместная интеграция frontend/backend](docs/admin-integration.md).
 
@@ -92,6 +92,12 @@ Backend раздаёт только содержимое указанного к
 
 ## WebSocket: подключение frontend
 
+M2: [manifest protocol v3](docs/protocol-v3-manifest.md). Новая пара клиента/сервера предпочитает v3; первый вход/reconnect остаются full, повторная область использует membership и запрашивает только отсутствующие points. `WS_MANIFEST_ENABLED=false` выбирает предложенный v2 для отката M2.
+
+Новый frontend предлагает `endless-drawing.msgpack.v2`, затем `endless-drawing.json.v1`. Сервер выбирает профиль до hello; MessagePack — Binary messages с float64 и строковыми UUID. Клиенты без subprotocol остаются на JSON v1. Public и read-only admin используют общий codec; HTTP Admin API прежний. Формат фиксирован на соединение, не угадывается по payload.
+
+Для rollback нового транспорта: `WS_MSGPACK_ENABLED=false` выбирает предложенный JSON v1 на новых соединениях, не меняя формат открытых. Compose передаёт этот флаг; обновление файла в репозитории само по себе не меняет VPS Compose. Новый frontend нельзя выкладывать перед dual-profile backend. Эта реализация пока не выложена на production.
+
 Адрес локально: `ws://127.0.0.1:3000/ws`, production — `wss://<домен>/ws`. Формы сообщений приведены в [контракте](docs/protocol.md#10-реализованный-профиль-backend).
 
 1. Генерировать 32 случайных байта через Web Crypto, хранить base64url-секрет без padding в `sessionStorage`.
@@ -108,12 +114,14 @@ Backend раздаёт только содержимое указанного к
 | Переменная | По умолчанию |
 | --- | --- |
 | `ALLOWED_ORIGINS` | `http://localhost:5173,http://127.0.0.1:5173,http://localhost:3000,http://127.0.0.1:3000` |
+| `WS_MANIFEST_ENABLED` | `true`; `false` отключает v3, сохраняя MessagePack v2 |
+| `WS_MSGPACK_ENABLED` | `true`; `false` выключает выбор v2, сохраняя JSON |
 | `WS_MAX_CONNECTIONS` | `256` на процесс, включая ожидающие hello |
 | `WS_MAX_MESSAGE_BYTES` | `131072` (128 KiB), также предел входящего frame |
 | `MUTATION_QUEUE_CAPACITY` | `128` команд, включая snapshot barriers |
 | `EVENT_BUFFER_CAPACITY` | `256` событий общего broadcast-ring |
 | `SNAPSHOT_PAGE_SIZE` | `100` штрихов на страницу БД, максимум `1000` |
-| `SNAPSHOT_CHUNK_BYTES` | `262144` (256 KiB) на сериализованный chunk |
+| `SNAPSHOT_CHUNK_BYTES` | `262144` (256 KiB) на JSON chunk; для v2 hard cap 256 KiB, target 64 KiB, ≤8192 points/chunk |
 | `VIEWPORT_MAX_SPAN` | `30000` мировых единиц по каждой оси |
 | `WS_CREATES_PER_SECOND` | `5` |
 | `WS_DELETES_PER_SECOND` | `20` |

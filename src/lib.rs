@@ -8,6 +8,8 @@ pub mod domain;
 pub mod realtime;
 pub mod session;
 
+mod codec;
+mod manifest;
 mod protocol;
 mod realtime_settings;
 mod snapshot;

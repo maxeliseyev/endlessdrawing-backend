@@ -15,6 +15,20 @@ pub(crate) enum ClientMessage {
         subscription_id: String,
         bounds: ViewportInput,
     },
+    #[serde(rename = "viewport.subscribe.cached")]
+    CachedSubscribe {
+        subscription_id: String,
+        bounds: ViewportInput,
+    },
+    #[serde(rename = "viewport.fetch")]
+    Fetch {
+        subscription_id: String,
+        snapshot_token: Uuid,
+        batch: u32,
+        stroke_ids: Vec<Uuid>,
+        #[serde(rename = "final")]
+        final_batch: bool,
+    },
     #[serde(rename = "stroke.create")]
     Create {
         request_id: String,
@@ -101,6 +115,35 @@ pub(crate) enum ServerMessage {
     },
     #[serde(rename = "viewport.snapshot.end")]
     SnapshotEnd { subscription_id: String },
+    #[serde(rename = "viewport.manifest.begin")]
+    ManifestBegin {
+        subscription_id: String,
+        snapshot_token: Uuid,
+        stroke_count: usize,
+        point_count: usize,
+    },
+    #[serde(rename = "viewport.manifest.chunk")]
+    ManifestChunk {
+        subscription_id: String,
+        snapshot_token: Uuid,
+        stroke_ids: Vec<Uuid>,
+    },
+    #[serde(rename = "viewport.manifest.end")]
+    ManifestEnd {
+        subscription_id: String,
+        snapshot_token: Uuid,
+    },
+    #[serde(rename = "viewport.fetch.end")]
+    FetchEnd {
+        subscription_id: String,
+        snapshot_token: Uuid,
+        batch: u32,
+    },
+    #[serde(rename = "viewport.snapshot.fallback")]
+    SnapshotFallback {
+        subscription_id: String,
+        reason: &'static str,
+    },
     #[serde(rename = "stroke.created")]
     Created {
         subscription_id: String,

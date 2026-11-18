@@ -7,6 +7,10 @@ use std::time::Duration;
 pub struct RealtimeSettings {
     pub allowed_origins: Vec<String>,
     pub max_connections: usize,
+    /// Allow selection of MessagePack v2; JSON v1 remains supported.
+    pub msgpack_enabled: bool,
+    /// Allow manifest/missing-geometry v3 when binary transport is enabled.
+    pub manifest_enabled: bool,
     pub max_message_bytes: usize,
     pub mutation_queue_capacity: usize,
     pub event_buffer_capacity: usize,
@@ -40,6 +44,8 @@ impl Default for RealtimeSettings {
             .map(str::to_owned)
             .collect(),
             max_connections: 256,
+            msgpack_enabled: true,
+            manifest_enabled: true,
             max_message_bytes: 128 * 1024,
             mutation_queue_capacity: 128,
             event_buffer_capacity: 256,

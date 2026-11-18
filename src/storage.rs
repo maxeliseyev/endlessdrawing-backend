@@ -1,4 +1,5 @@
-//! Parameterized storage operations, called only by the sequential writer.
+//! Parameterized storage operations. Mutations run only in the sequential writer;
+//! snapshot membership and immutable geometry reads do not mutate records.
 
 use sqlx::{FromRow, PgConnection, types::Json};
 use uuid::Uuid;
@@ -190,6 +191,51 @@ pub(crate) async fn page(
         .bind(after)
         .bind(i64::from(limit))
         .fetch_all(connection)
+        .await?
+        .into_iter()
+        .map(TryInto::try_into)
+        .collect()
+}
+
+#[derive(FromRow)]
+pub(crate) struct ManifestEntry {
+    pub id: Uuid,
+    pub seq: i64,
+    pub point_count: i32,
+}
+
+/// Metadata from one consistent snapshot; points are not transferred from PostgreSQL.
+pub(crate) async fn manifest_page(
+    connection: &mut PgConnection,
+    bounds: Bounds,
+    after: i64,
+    limit: u32,
+) -> Result<Vec<ManifestEntry>, sqlx::Error> {
+    sqlx::query_as(
+        "SELECT id, seq, jsonb_array_length(points) AS point_count FROM strokes
+        WHERE deleted_at IS NULL AND bounds && box(point($1, $2), point($3, $4))
+        AND seq > $5 ORDER BY seq ASC LIMIT $6",
+    )
+    .bind(bounds.min_x)
+    .bind(bounds.min_y)
+    .bind(bounds.max_x)
+    .bind(bounds.max_y)
+    .bind(after)
+    .bind(i64::from(limit))
+    .fetch_all(connection)
+    .await
+}
+
+/// Snapshot-member geometry remains immutable after soft deletion. Membership and
+/// seq are checked by the manifest stream before these rows reach a socket.
+pub(crate) async fn manifest_geometry(
+    pool: &sqlx::PgPool,
+    ids: &[Uuid],
+) -> Result<Vec<StoredStroke>, sqlx::Error> {
+    let query = format!("SELECT {COLUMNS} FROM strokes WHERE id = ANY($1)");
+    sqlx::query_as::<_, StrokeRow>(&query)
+        .bind(ids)
+        .fetch_all(pool)
         .await?
         .into_iter()
         .map(TryInto::try_into)

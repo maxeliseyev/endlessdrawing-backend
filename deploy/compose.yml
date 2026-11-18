@@ -50,6 +50,8 @@ services:
       ALLOWED_ORIGINS: ${ALLOWED_ORIGINS:?Set ALLOWED_ORIGINS in runtime.env}
       BIND_ADDR: "0.0.0.0:3000"
       STATIC_DIR: /app/static
+      WS_MSGPACK_ENABLED: ${WS_MSGPACK_ENABLED:-true}
+      WS_MANIFEST_ENABLED: ${WS_MANIFEST_ENABLED:-true}
       ADMIN_ENABLED: ${ADMIN_ENABLED:-false}
       ADMIN_ORIGIN: ${ADMIN_ORIGIN:-https://endlessdrawing.com}
       ADMIN_RP_ID: ${ADMIN_RP_ID:-endlessdrawing.com}

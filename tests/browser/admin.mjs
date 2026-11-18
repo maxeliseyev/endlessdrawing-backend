@@ -25,6 +25,7 @@ function testTotp(secret, step = Math.floor(Date.now() / 30000)) {
 
 const require = createRequire(join(resolve(process.argv[2]), 'package.json'));
 const { chromium, expect: baseExpect } = require('@playwright/test');
+const { decode } = require('@msgpack/msgpack');
 const expect = baseExpect.configure({ timeout: 15_000 });
 const directory = mkdtempSync(join(tmpdir(), 'endlessdrawing-admin-tls-'));
 let backend, browser, step = 'TLS bootstrap';
@@ -95,6 +96,11 @@ try {
   step = 'native WebAuthn registration against real backend';
   const adminContext = await browser.newContext(options);
   admin = await adminContext.newPage();
+  // Only server-side public world messages; no hello secret or HTTP factor data.
+  const worldFrames = [];
+  admin.on('websocket', (socket) => socket.on('framereceived', ({ payload }) => {
+    worldFrames.push(typeof payload === 'string' ? JSON.parse(payload) : decode(payload));
+  }));
   const pageErrors = [];
   admin.on('pageerror', (error) => pageErrors.push(error.name));
   const cdp = await adminContext.newCDPSession(admin);
@@ -141,6 +147,18 @@ try {
     .toEqual({ httpOnly: true, secure: true, sameSite: 'Strict', path: '/' });
   expect(await admin.evaluate(() => document.cookie.includes('__Host-ed-admin'))).toBe(false);
   expect(await admin.evaluate(() => ({ ...localStorage, ...sessionStorage }))).toEqual({});
+  step = 'read-only manifest v3 refresh reuses geometry on real HTTPS';
+  expect(worldFrames.find((m) => m.type === 'hello.ack')?.protocol_version).toBe(3);
+  const refresh = async () => {
+    const from = worldFrames.length;
+    await admin.getByRole('button', { name: 'Reload area', exact: true }).click();
+    await expect.poll(() => worldFrames.slice(from).some((m) => m.type === 'viewport.snapshot.end')).toBe(true);
+    const received = worldFrames.slice(from);
+    expect(received.some((m) => m.type === 'viewport.manifest.end')).toBe(true);
+    expect(received.filter((m) => m.type === 'viewport.snapshot.chunk')).toEqual([]);
+    await expect(admin.locator('.world-status')).toHaveText('Shared world loaded');
+  };
+  await refresh();
   step = 'fresh UV session configures local Google Authenticator QR and confirms a real TOTP';
   await admin.getByRole('button', { name: 'Google Authenticator backup', exact: true }).click();
   await admin.getByRole('button', { name: 'Connect Google Authenticator', exact: true }).click();
@@ -159,6 +177,8 @@ try {
   await admin.getByRole('dialog').getByLabel('Reason', { exact: true }).fill('Ephemeral real integration test');
   await admin.getByRole('dialog').getByRole('button', { name: 'Hide selected strokes', exact: true }).click();
   await expect(admin.getByRole('status').first()).toContainText('Confirmed: 1 hidden');
+  step = 'manifest refresh after hide cannot resurrect the hidden stroke';
+  await refresh();
   for (const page of [ownerPage, visitorPage]) {
     await expect.poll(() => page.evaluate((id) => window.testProtocol.messages.some((m) => m.type === 'stroke.deleted' && m.stroke_id === id), id)).toBe(true);
     await page.evaluate(() => {

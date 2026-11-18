@@ -148,7 +148,11 @@ where
 
 impl RealtimeSettings {
     fn from_lookup(lookup: &impl Fn(&str) -> Option<String>) -> Result<Self, ConfigError> {
-        let mut settings = Self::default();
+        let mut settings = Self {
+            msgpack_enabled: setting(lookup, "WS_MSGPACK_ENABLED", "true")?,
+            manifest_enabled: setting(lookup, "WS_MANIFEST_ENABLED", "true")?,
+            ..Self::default()
+        };
         if let Some(origins) = lookup("ALLOWED_ORIGINS") {
             settings.allowed_origins = origins
                 .split(',')
@@ -279,6 +283,18 @@ impl RealtimeSettings {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn messagepack_rollout_gate_is_strict_and_can_select_json_only() {
+        assert!(config_with(&[]).unwrap().realtime.msgpack_enabled);
+        assert!(
+            !config_with(&[("WS_MSGPACK_ENABLED", "false")])
+                .unwrap()
+                .realtime
+                .msgpack_enabled
+        );
+        assert!(config_with(&[("WS_MSGPACK_ENABLED", "yes")]).is_err());
+    }
 
     fn config_with(overrides: &[(&str, &str)]) -> Result<Config, ConfigError> {
         Config::from_lookup(|key| {

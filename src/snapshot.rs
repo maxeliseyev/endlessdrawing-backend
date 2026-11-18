@@ -7,6 +7,7 @@ use tokio::sync::mpsc;
 use tokio_util::task::AbortOnDropHandle;
 
 use crate::{
+    codec::{Profile, SERVER_BYTES},
     config::RealtimeSettings,
     domain::Bounds,
     protocol::{ErrorCode, PublicStroke, ServerMessage},
@@ -15,24 +16,40 @@ use crate::{
 };
 
 pub(crate) struct SnapshotStream {
-    receiver: mpsc::Receiver<ServerMessage>,
-    _task: AbortOnDropHandle<()>,
+    pub(crate) receiver: mpsc::Receiver<ServerMessage>,
+    pub(crate) requests: Option<mpsc::Sender<crate::manifest::FetchRequest>>,
+    pub(crate) _task: AbortOnDropHandle<()>,
 }
 
 impl SnapshotStream {
+    pub fn fetch(&self, request: crate::manifest::FetchRequest) -> bool {
+        self.requests
+            .as_ref()
+            .is_some_and(|requests| requests.try_send(request).is_ok())
+    }
+
     pub fn start(
         transaction: Transaction<'static, Postgres>,
         owner: OwnerDigest,
         bounds: Bounds,
         id: String,
         settings: Arc<RealtimeSettings>,
+        profile: Profile,
     ) -> Self {
         // At most two serialized-message equivalents wait ahead of the socket writer.
         let (sender, receiver) = mpsc::channel(2);
         let task = tokio::spawn(async move {
             let result = tokio::time::timeout(
                 settings.snapshot_timeout,
-                stream(transaction, &sender, &owner, bounds, &id, &settings),
+                stream(
+                    transaction,
+                    &sender,
+                    &owner,
+                    bounds,
+                    &id,
+                    &settings,
+                    profile,
+                ),
             )
             .await;
             if !matches!(result, Ok(Ok(()))) {
@@ -43,6 +60,7 @@ impl SnapshotStream {
         });
         Self {
             receiver,
+            requests: None,
             _task: AbortOnDropHandle::new(task),
         }
     }
@@ -63,6 +81,7 @@ async fn stream(
     bounds: Bounds,
     id: &str,
     settings: &RealtimeSettings,
+    profile: Profile,
 ) -> Result<(), ()> {
     deliver(
         sender,
@@ -71,12 +90,6 @@ async fn stream(
         },
     )
     .await?;
-    let overhead = serde_json::to_vec(&ServerMessage::SnapshotChunk {
-        subscription_id: id.into(),
-        strokes: Vec::new(),
-    })
-    .map_err(|_| ())?
-    .len();
     let mut after = 0;
     loop {
         let page = storage::page(&mut transaction, bounds, after, settings.snapshot_page_size)
@@ -85,40 +98,17 @@ async fn stream(
         if page.is_empty() {
             break;
         }
-        let mut strokes: Vec<PublicStroke> = Vec::new();
-        let mut bytes = overhead;
-        for record in page {
-            after = record.seq;
-            let stroke = record.public(owner);
-            let length = serde_json::to_vec(&stroke).map_err(|_| ())?.len();
-            if overhead + length > settings.snapshot_chunk_bytes {
-                return Err(());
-            }
-            let separator = usize::from(!strokes.is_empty());
-            if bytes + length + separator > settings.snapshot_chunk_bytes {
-                deliver(
-                    sender,
-                    ServerMessage::SnapshotChunk {
-                        subscription_id: id.into(),
-                        strokes: std::mem::take(&mut strokes),
-                    },
-                )
-                .await?;
-                bytes = overhead;
-            }
-            bytes += length + usize::from(!strokes.is_empty());
-            strokes.push(stroke);
+        if let Some(last) = page.last() {
+            after = last.seq;
         }
-        if !strokes.is_empty() {
-            deliver(
-                sender,
-                ServerMessage::SnapshotChunk {
-                    subscription_id: id.into(),
-                    strokes,
-                },
-            )
-            .await?;
-        }
+        deliver_strokes(
+            sender,
+            id,
+            settings,
+            profile,
+            page.into_iter().map(|record| record.public(owner)),
+        )
+        .await?;
     }
     transaction.commit().await.map_err(|_| ())?;
     deliver(
@@ -128,4 +118,72 @@ async fn stream(
         },
     )
     .await
+}
+
+pub(crate) async fn deliver_strokes(
+    sender: &mpsc::Sender<ServerMessage>,
+    id: &str,
+    settings: &RealtimeSettings,
+    profile: Profile,
+    records: impl Iterator<Item = PublicStroke> + Send,
+) -> Result<(), ()> {
+    let overhead = profile
+        .encode(&ServerMessage::SnapshotChunk {
+            subscription_id: id.into(),
+            strokes: Vec::new(),
+        })
+        .map_err(|_| ())?
+        .len();
+    // Array headers can grow by up to four bytes after the empty-array estimate.
+    let overhead = overhead + if profile.binary() { 4 } else { 0 };
+    let hard_limit = if profile.binary() {
+        settings.snapshot_chunk_bytes.min(SERVER_BYTES)
+    } else {
+        settings.snapshot_chunk_bytes
+    };
+    let target = if profile.binary() {
+        hard_limit.min(64 * 1024)
+    } else {
+        hard_limit
+    };
+    let mut strokes: Vec<PublicStroke> = Vec::new();
+    let mut bytes = overhead;
+    let mut points = 0;
+    for stroke in records {
+        let length = profile.encode(&stroke).map_err(|_| ())?.len();
+        if overhead + length > hard_limit {
+            return Err(());
+        }
+        let separator = usize::from(!strokes.is_empty());
+        if !strokes.is_empty()
+            && (bytes + length + separator > target
+                || strokes.len() >= 1000
+                || (profile.binary() && points + stroke.input.points.len() > 8192))
+        {
+            deliver(
+                sender,
+                ServerMessage::SnapshotChunk {
+                    subscription_id: id.into(),
+                    strokes: std::mem::take(&mut strokes),
+                },
+            )
+            .await?;
+            bytes = overhead;
+            points = 0;
+        }
+        bytes += length + usize::from(!strokes.is_empty());
+        points += stroke.input.points.len();
+        strokes.push(stroke);
+    }
+    if !strokes.is_empty() {
+        deliver(
+            sender,
+            ServerMessage::SnapshotChunk {
+                subscription_id: id.into(),
+                strokes,
+            },
+        )
+        .await?;
+    }
+    Ok(())
 }

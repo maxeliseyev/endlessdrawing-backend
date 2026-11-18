@@ -8,7 +8,10 @@ use axum::{
         State, WebSocketUpgrade,
         ws::{CloseFrame, Message, WebSocket},
     },
-    http::{HeaderMap, StatusCode, header::ORIGIN},
+    http::{
+        HeaderMap, StatusCode,
+        header::{ORIGIN, SEC_WEBSOCKET_PROTOCOL},
+    },
     response::{IntoResponse, Response},
     routing::get,
 };
@@ -16,8 +19,10 @@ use tokio::{
     sync::{OwnedSemaphorePermit, broadcast},
     time::Instant,
 };
+use tokio_tungstenite::tungstenite::Error as SocketError;
 
 use crate::{
+    codec::{CLIENT_BYTES, JSON_PROTOCOL, MANIFEST_PROTOCOL, MSGPACK_PROTOCOL, Profile},
     domain::Bounds,
     protocol::{ClientMessage, ErrorCode, ServerMessage, SpawnPoint, intersects, valid_id},
     realtime::{Event, Realtime},
@@ -53,19 +58,57 @@ async fn upgrade(
     let Ok(permit) = service.connections.clone().try_acquire_owned() else {
         return StatusCode::SERVICE_UNAVAILABLE.into_response();
     };
+    let offered: Vec<&str> = headers
+        .get_all(SEC_WEBSOCKET_PROTOCOL)
+        .iter()
+        .filter_map(|value| value.to_str().ok())
+        .flat_map(|value| value.split(',').map(str::trim))
+        .collect();
+    let selected = if service.settings.msgpack_enabled
+        && service.settings.manifest_enabled
+        && offered.contains(&MANIFEST_PROTOCOL)
+    {
+        Some(MANIFEST_PROTOCOL)
+    } else if service.settings.msgpack_enabled && offered.contains(&MSGPACK_PROTOCOL) {
+        Some(MSGPACK_PROTOCOL)
+    } else if offered.contains(&JSON_PROTOCOL) {
+        Some(JSON_PROTOCOL)
+    } else if headers.contains_key(SEC_WEBSOCKET_PROTOCOL) {
+        return StatusCode::BAD_REQUEST.into_response();
+    } else {
+        None
+    };
+    let profile = if selected == Some(MANIFEST_PROTOCOL) {
+        Profile::Manifest
+    } else if selected == Some(MSGPACK_PROTOCOL) {
+        Profile::MessagePack
+    } else {
+        Profile::Json
+    };
+    let message_limit = if profile.binary() {
+        service.settings.max_message_bytes.min(CLIENT_BYTES)
+    } else {
+        service.settings.max_message_bytes
+    };
     upgrade
-        .max_message_size(service.settings.max_message_bytes)
-        .max_frame_size(service.settings.max_message_bytes)
+        .protocols(selected)
+        .max_message_size(message_limit)
+        .max_frame_size(message_limit)
         .write_buffer_size(0)
-        .on_upgrade(move |socket| connection(socket, service, permit))
+        .on_upgrade(move |socket| connection(socket, service, permit, profile))
 }
 
-async fn send(socket: &mut WebSocket, message: &ServerMessage, timeout: Duration) -> bool {
-    let Ok(text) = serde_json::to_string(message) else {
+async fn send(
+    profile: Profile,
+    socket: &mut WebSocket,
+    message: &ServerMessage,
+    timeout: Duration,
+) -> bool {
+    let Ok(frame) = profile.frame(message) else {
         return false;
     };
     matches!(
-        tokio::time::timeout(timeout, socket.send(Message::Text(text.into()))).await,
+        tokio::time::timeout(timeout, socket.send(frame)).await,
         Ok(Ok(()))
     )
 }
@@ -81,18 +124,51 @@ async fn close(socket: &mut WebSocket, code: u16, reason: &'static str, timeout:
     .await;
 }
 
-async fn hello(socket: &mut WebSocket, service: &Realtime) -> Option<OwnerDigest> {
+// A frame/message capacity error happens before application decode. Preserve its
+// close code rather than turning an oversized message into a normal shutdown.
+async fn failed_frame(socket: &mut WebSocket, error: axum::Error, timeout: Duration) {
+    let code = match error.into_inner().downcast::<SocketError>().as_deref() {
+        Ok(SocketError::Capacity(_)) => 1009,
+        Ok(SocketError::Utf8(_)) => 1007,
+        Ok(SocketError::Protocol(_)) => 1002,
+        _ => 1001,
+    };
+    close(socket, code, "invalid websocket frame", timeout).await;
+}
+
+async fn hello(
+    socket: &mut WebSocket,
+    service: &Realtime,
+    profile: Profile,
+) -> Option<OwnerDigest> {
     let deadline = Instant::now() + service.settings.hello_timeout;
     loop {
         let frame = tokio::select! {
             _ = service.shutdown.cancelled() => return None,
-            result = tokio::time::timeout_at(deadline, socket.recv()) => result.ok()??.ok()?,
+            result = tokio::time::timeout_at(deadline, socket.recv()) => match result {
+                Ok(Some(Ok(frame))) => frame,
+                Ok(Some(Err(error))) => { failed_frame(socket, error, service.settings.send_timeout).await; return None; }
+                _ => return None,
+            },
         };
         match frame {
             Message::Ping(_) | Message::Pong(_) => continue,
             Message::Close(_) => return None,
-            Message::Text(text) => {
-                let result = match serde_json::from_str::<ClientMessage>(&text) {
+            frame @ (Message::Text(_) | Message::Binary(_)) => {
+                let value = match profile.decode(frame) {
+                    Ok(value) => value,
+                    Err(error) => {
+                        close(
+                            socket,
+                            error.close_code(),
+                            "invalid wire message",
+                            service.settings.send_timeout,
+                        )
+                        .await;
+                        return None;
+                    }
+                };
+                let result = match serde_json::from_value::<ClientMessage>(value) {
                     Ok(ClientMessage::Hello { session_secret }) => {
                         OwnerDigest::from_secret(&session_secret)
                             .map_err(|_| ErrorCode::InvalidSession)
@@ -103,9 +179,10 @@ async fn hello(socket: &mut WebSocket, service: &Realtime) -> Option<OwnerDigest
                 match result {
                     Ok(owner) => {
                         if send(
+                            profile,
                             socket,
                             &ServerMessage::HelloAck {
-                                protocol_version: 1,
+                                protocol_version: profile.version(),
                                 spawn: service.spawn.pick().map(|[x, y]| SpawnPoint { x, y }),
                             },
                             service.settings.send_timeout,
@@ -118,6 +195,7 @@ async fn hello(socket: &mut WebSocket, service: &Realtime) -> Option<OwnerDigest
                     }
                     Err(code) => {
                         let _ = send(
+                            profile,
                             socket,
                             &code.response(None, None),
                             service.settings.send_timeout,
@@ -126,15 +204,6 @@ async fn hello(socket: &mut WebSocket, service: &Realtime) -> Option<OwnerDigest
                         return None;
                     }
                 }
-            }
-            _ => {
-                let _ = send(
-                    socket,
-                    &ErrorCode::InvalidMessage.response(None, None),
-                    service.settings.send_timeout,
-                )
-                .await;
-                return None;
             }
         }
     }
@@ -178,8 +247,13 @@ async fn subscription_item(subscription: &mut Option<Subscription>) -> Subscript
         .unwrap_or(SubscriptionItem::Resync)
 }
 
-async fn connection(mut socket: WebSocket, service: Realtime, _permit: OwnedSemaphorePermit) {
-    let Some(owner) = hello(&mut socket, &service).await else {
+async fn connection(
+    mut socket: WebSocket,
+    service: Realtime,
+    _permit: OwnedSemaphorePermit,
+    profile: Profile,
+) {
+    let Some(owner) = hello(&mut socket, &service, profile).await else {
         close(
             &mut socket,
             1008,
@@ -206,16 +280,36 @@ async fn connection(mut socket: WebSocket, service: Realtime, _permit: OwnedSema
                 None
             }
             frame = socket.recv() => {
-                let Some(Ok(frame)) = frame else { break; };
+                let frame = match frame {
+                    Some(Ok(frame)) => frame,
+                    Some(Err(error)) => { failed_frame(&mut socket, error, service.settings.send_timeout).await; break; }
+                    None => break,
+                };
                 last_seen = Instant::now();
                 if !rates.frames.allow(last_seen) {
-                    let _ = send(&mut socket, &ErrorCode::RateLimited.response(None, None), service.settings.send_timeout).await;
+                    let _ = send(profile, &mut socket, &ErrorCode::RateLimited.response(None, None), service.settings.send_timeout).await;
                     break;
                 }
                 match frame {
-                    Message::Text(text) => match parse(&text) {
-                        Ok(message) => command(message, &service, &owner, &mut rates, &mut subscription).await,
-                        Err(error) => Some(*error),
+                    frame @ (Message::Text(_) | Message::Binary(_)) => {
+                        // Legacy malformed JSON retains its correlated invalid_message response.
+                        let parsed = match (&frame, profile) {
+                            (Message::Text(text), Profile::Json) => parse(text),
+                            _ => {
+                                let value = match profile.decode(frame) {
+                                    Ok(value) => value,
+                                    Err(error) => {
+                                        close(&mut socket, error.close_code(), "invalid wire message", service.settings.send_timeout).await;
+                                        break;
+                                    }
+                                };
+                                parse_value(value)
+                            }
+                        };
+                        match parsed {
+                            Ok(message) => command(message, &service, &owner, &mut rates, &mut subscription, profile).await,
+                            Err(error) => Some(*error),
+                        }
                     },
                     Message::Ping(bytes) => {
                         if !matches!(tokio::time::timeout(service.settings.send_timeout, socket.send(Message::Pong(bytes))).await, Ok(Ok(()))) { break; }
@@ -223,7 +317,6 @@ async fn connection(mut socket: WebSocket, service: Realtime, _permit: OwnedSema
                     }
                     Message::Pong(_) => None,
                     Message::Close(_) => break,
-                    _ => Some(ErrorCode::InvalidMessage.response(None, None)),
                 }
             }
             item = subscription_item(&mut subscription) => {
@@ -231,7 +324,7 @@ async fn connection(mut socket: WebSocket, service: Realtime, _permit: OwnedSema
                     SubscriptionItem::Snapshot(message) => {
                         if matches!(message, ServerMessage::SnapshotEnd { .. }) {
                             if let Some(current) = &mut subscription { current.snapshot = None; }
-                        } else if matches!(message, ServerMessage::Error { .. }) {
+                        } else if matches!(message, ServerMessage::Error { .. } | ServerMessage::SnapshotFallback { .. }) {
                             subscription = None;
                         }
                         Some(message)
@@ -253,7 +346,13 @@ async fn connection(mut socket: WebSocket, service: Realtime, _permit: OwnedSema
             }
         };
         if let Some(response) = response
-            && !send(&mut socket, &response, service.settings.send_timeout).await
+            && !send(
+                profile,
+                &mut socket,
+                &response,
+                service.settings.send_timeout,
+            )
+            .await
         {
             break;
         }
@@ -271,6 +370,10 @@ async fn connection(mut socket: WebSocket, service: Realtime, _permit: OwnedSema
 fn parse(text: &str) -> Result<ClientMessage, Box<ServerMessage>> {
     let value: serde_json::Value =
         serde_json::from_str(text).map_err(|_| ErrorCode::InvalidMessage.response(None, None))?;
+    parse_value(value)
+}
+
+fn parse_value(value: serde_json::Value) -> Result<ClientMessage, Box<ServerMessage>> {
     let request_id = value
         .get("request_id")
         .and_then(|value| value.as_str())
@@ -291,13 +394,22 @@ async fn command(
     owner: &OwnerDigest,
     rates: &mut Rates,
     subscription: &mut Option<Subscription>,
+    profile: Profile,
 ) -> Option<ServerMessage> {
+    let cached = matches!(&message, ClientMessage::CachedSubscribe { .. });
     match message {
         ClientMessage::Hello { .. } => Some(ErrorCode::InvalidMessage.response(None, None)),
         ClientMessage::Subscribe {
             subscription_id,
             bounds,
+        }
+        | ClientMessage::CachedSubscribe {
+            subscription_id,
+            bounds,
         } => {
+            if cached && profile != Profile::Manifest {
+                return Some(ErrorCode::InvalidMessage.response(None, Some(subscription_id)));
+            }
             if !valid_id(&subscription_id) {
                 return Some(ErrorCode::InvalidMessage.response(None, None));
             }
@@ -310,15 +422,40 @@ async fn command(
             };
             // Release an old read transaction before acquiring a connection for the next.
             *subscription = None;
+            let permit = if cached {
+                match service.manifest_slots.clone().try_acquire_owned() {
+                    Ok(permit) => Some(permit),
+                    Err(_) => {
+                        return Some(ServerMessage::SnapshotFallback {
+                            subscription_id,
+                            reason: "busy",
+                        });
+                    }
+                }
+            } else {
+                None
+            };
             match service.writer.snapshot().await {
                 Ok(snapshot) => {
-                    let stream = SnapshotStream::start(
-                        snapshot.transaction,
-                        owner.clone(),
-                        bounds,
-                        subscription_id.clone(),
-                        service.settings.clone(),
-                    );
+                    let stream = if let Some(permit) = permit {
+                        crate::manifest::start(
+                            snapshot.transaction,
+                            owner.clone(),
+                            bounds,
+                            subscription_id.clone(),
+                            service.clone(),
+                            permit,
+                        )
+                    } else {
+                        SnapshotStream::start(
+                            snapshot.transaction,
+                            owner.clone(),
+                            bounds,
+                            subscription_id.clone(),
+                            service.settings.clone(),
+                            profile,
+                        )
+                    };
                     *subscription = Some(Subscription {
                         id: subscription_id,
                         bounds,
@@ -329,6 +466,37 @@ async fn command(
                 }
                 Err(code) => Some(code.response(None, Some(subscription_id))),
             }
+        }
+        ClientMessage::Fetch {
+            subscription_id,
+            snapshot_token,
+            batch,
+            stroke_ids,
+            final_batch,
+        } => {
+            if profile != Profile::Manifest {
+                return Some(ErrorCode::InvalidMessage.response(None, Some(subscription_id)));
+            }
+            // Stale requests cannot terminate a replacement subscription.
+            let current = subscription
+                .as_ref()
+                .filter(|current| current.id == subscription_id)?;
+            let valid = stroke_ids.len() <= 1000
+                && batch <= 20
+                && current.snapshot.as_ref().is_some_and(|snapshot| {
+                    snapshot.fetch(crate::manifest::FetchRequest {
+                        subscription_id: subscription_id.clone(),
+                        snapshot_token,
+                        batch,
+                        stroke_ids,
+                        final_batch,
+                    })
+                });
+            if !valid {
+                *subscription = None;
+                return Some(ErrorCode::ResyncRequired.response(None, Some(subscription_id)));
+            }
+            None
         }
         ClientMessage::Create { request_id, stroke } => {
             if !valid_id(&request_id) {
