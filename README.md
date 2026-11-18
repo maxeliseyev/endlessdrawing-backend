@@ -114,7 +114,8 @@ M2: [manifest protocol v3](docs/protocol-v3-manifest.md). Новая пара к
 | Переменная | По умолчанию |
 | --- | --- |
 | `ALLOWED_ORIGINS` | `http://localhost:5173,http://127.0.0.1:5173,http://localhost:3000,http://127.0.0.1:3000` |
-| `WS_MANIFEST_ENABLED` | `true`; `false` отключает v3, сохраняя MessagePack v2 |
+| `WS_PRIORITY_ENABLED` | `true`; `false` отключает v4, сохраняя manifest v3 |
+| `WS_MANIFEST_ENABLED` | `true`; `false` отключает v4/v3, сохраняя MessagePack v2 |
 | `WS_MSGPACK_ENABLED` | `true`; `false` выключает выбор v2, сохраняя JSON |
 | `WS_MAX_CONNECTIONS` | `256` на процесс, включая ожидающие hello |
 | `WS_MAX_MESSAGE_BYTES` | `131072` (128 KiB), также предел входящего frame |
@@ -211,4 +212,4 @@ Dockerfile       # non-root Rust runtime + separately built Vite dist
 .github/workflows/deploy.yml # manual verified GitHub Actions deployment
 ```
 
-M3 реализован локально: `endless-drawing.msgpack.v4` с hint видимой области, одним согласованным full/cached snapshot и откатом на v3/v2/JSON. Выбор v4 отключается `WS_PRIORITY_ENABLED=false`; серверный Compose должен передавать этот флаг (Actions обновляет образ, но не Compose). Новых DB migrations нет. Нормативный контракт — [protocol-v4-priority.md](docs/protocol-v4-priority.md); браузерные замеры — frontend `docs/loading-performance.md`. Production этим изменением ещё не обновлялся.
+M3 опубликован 18.11.2026: `endless-drawing.msgpack.v4` с hint видимой области, одним согласованным full/cached snapshot и откатом на v3/v2/JSON. Выбор v4 отключается `WS_PRIORITY_ENABLED=false`; серверный Compose должен передавать этот флаг (Actions обновляет образ, но не Compose). Новых DB migrations нет. Нормативный контракт — [protocol-v4-priority.md](docs/protocol-v4-priority.md); браузерные замеры — frontend `docs/loading-performance.md`. Релиз [Actions 44364578357](https://github.com/maxeliseyev/endlessdrawing-backend/actions/runs/44364578357): backend `5ac7ddf`, frontend `b291a2b`; на HTTPS проверены v4 и прежние профили, warm manifest без повторной geometry, новые `/about` и `/privacy`.
