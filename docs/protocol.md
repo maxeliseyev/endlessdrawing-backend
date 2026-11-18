@@ -4,6 +4,8 @@
 
 Бинарный профиль реализован отдельно: [MessagePack v2](protocol-v2-msgpack.md). JSON v1 продолжает работать без subprotocol и с `endless-drawing.json.v1`. Семантика операций ниже общая, формы v2 после decode совпадают, кроме версии hello.ack.
 
+Manifest/missing geometry — [v3](protocol-v3-manifest.md); приоритет видимой области — [v4](protocol-v4-priority.md). Семантика мутаций общая; форма подписки и порядок geometry определяются выбранным профилем.
+
 ## 1. Статус и решения перед интеграцией
 
 **Из исходного ТЗ:** один WSS `/ws` на вкладку, JSON с `type`, `hello`, подписки по bounds, snapshot begin/chunk/end, create/delete, ack/error, `request_id`, `subscription_id`, ownership через сессионный секрет и идемпотентность создания по UUID.

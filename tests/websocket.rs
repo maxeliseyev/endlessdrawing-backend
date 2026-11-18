@@ -679,3 +679,5 @@ async fn new_sessions_get_an_entry_hint_near_live_drawing(pool: PgPool) {
 include!("support/msgpack.rs");
 
 include!("support/manifest.rs");
+
+include!("support/priority.rs");

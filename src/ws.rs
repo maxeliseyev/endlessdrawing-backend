@@ -22,7 +22,10 @@ use tokio::{
 use tokio_tungstenite::tungstenite::Error as SocketError;
 
 use crate::{
-    codec::{CLIENT_BYTES, JSON_PROTOCOL, MANIFEST_PROTOCOL, MSGPACK_PROTOCOL, Profile},
+    codec::{
+        CLIENT_BYTES, JSON_PROTOCOL, MANIFEST_PROTOCOL, MSGPACK_PROTOCOL, PRIORITY_PROTOCOL,
+        Profile,
+    },
     domain::Bounds,
     protocol::{ClientMessage, ErrorCode, ServerMessage, SpawnPoint, intersects, valid_id},
     realtime::{Event, Realtime},
@@ -66,6 +69,12 @@ async fn upgrade(
         .collect();
     let selected = if service.settings.msgpack_enabled
         && service.settings.manifest_enabled
+        && service.settings.priority_enabled
+        && offered.contains(&PRIORITY_PROTOCOL)
+    {
+        Some(PRIORITY_PROTOCOL)
+    } else if service.settings.msgpack_enabled
+        && service.settings.manifest_enabled
         && offered.contains(&MANIFEST_PROTOCOL)
     {
         Some(MANIFEST_PROTOCOL)
@@ -78,7 +87,9 @@ async fn upgrade(
     } else {
         None
     };
-    let profile = if selected == Some(MANIFEST_PROTOCOL) {
+    let profile = if selected == Some(PRIORITY_PROTOCOL) {
+        Profile::Priority
+    } else if selected == Some(MANIFEST_PROTOCOL) {
         Profile::Manifest
     } else if selected == Some(MSGPACK_PROTOCOL) {
         Profile::MessagePack
@@ -402,12 +413,14 @@ async fn command(
         ClientMessage::Subscribe {
             subscription_id,
             bounds,
+            visible_bounds,
         }
         | ClientMessage::CachedSubscribe {
             subscription_id,
             bounds,
+            visible_bounds,
         } => {
-            if cached && profile != Profile::Manifest {
+            if cached && !matches!(profile, Profile::Manifest | Profile::Priority) {
                 return Some(ErrorCode::InvalidMessage.response(None, Some(subscription_id)));
             }
             if !valid_id(&subscription_id) {
@@ -420,6 +433,28 @@ async fn command(
                 Ok(bounds) => bounds,
                 Err(code) => return Some(code.response(None, Some(subscription_id))),
             };
+            if visible_bounds.is_some() != (profile == Profile::Priority) {
+                return Some(ErrorCode::InvalidMessage.response(None, Some(subscription_id)));
+            }
+            let visible = match visible_bounds {
+                Some(input) => match input.validate(service.settings.viewport_max_span) {
+                    Ok(visible)
+                        if visible.min_x >= bounds.min_x
+                            && visible.min_y >= bounds.min_y
+                            && visible.max_x <= bounds.max_x
+                            && visible.max_y <= bounds.max_y =>
+                    {
+                        Some(visible)
+                    }
+                    _ => {
+                        return Some(
+                            ErrorCode::ValidationFailed.response(None, Some(subscription_id)),
+                        );
+                    }
+                },
+                None => None,
+            };
+            let area = crate::snapshot::Area { bounds, visible };
             // Release an old read transaction before acquiring a connection for the next.
             *subscription = None;
             let permit = if cached {
@@ -441,7 +476,7 @@ async fn command(
                         crate::manifest::start(
                             snapshot.transaction,
                             owner.clone(),
-                            bounds,
+                            area,
                             subscription_id.clone(),
                             service.clone(),
                             permit,
@@ -450,7 +485,7 @@ async fn command(
                         SnapshotStream::start(
                             snapshot.transaction,
                             owner.clone(),
-                            bounds,
+                            area,
                             subscription_id.clone(),
                             service.settings.clone(),
                             profile,
@@ -474,7 +509,7 @@ async fn command(
             stroke_ids,
             final_batch,
         } => {
-            if profile != Profile::Manifest {
+            if !matches!(profile, Profile::Manifest | Profile::Priority) {
                 return Some(ErrorCode::InvalidMessage.response(None, Some(subscription_id)));
             }
             // Stale requests cannot terminate a replacement subscription.

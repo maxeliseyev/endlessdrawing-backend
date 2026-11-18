@@ -14,11 +14,15 @@ pub(crate) enum ClientMessage {
     Subscribe {
         subscription_id: String,
         bounds: ViewportInput,
+        #[serde(default, deserialize_with = "optional_viewport")]
+        visible_bounds: Option<ViewportInput>,
     },
     #[serde(rename = "viewport.subscribe.cached")]
     CachedSubscribe {
         subscription_id: String,
         bounds: ViewportInput,
+        #[serde(default, deserialize_with = "optional_viewport")]
+        visible_bounds: Option<ViewportInput>,
     },
     #[serde(rename = "viewport.fetch")]
     Fetch {
@@ -36,6 +40,12 @@ pub(crate) enum ClientMessage {
     },
     #[serde(rename = "stroke.delete")]
     Delete { request_id: String, stroke_id: Uuid },
+}
+
+fn optional_viewport<'de, D: serde::Deserializer<'de>>(
+    deserializer: D,
+) -> Result<Option<ViewportInput>, D::Error> {
+    ViewportInput::deserialize(deserializer).map(Some)
 }
 
 #[derive(Clone, Copy, Deserialize)]

@@ -6,6 +6,7 @@ use axum::extract::ws::Message;
 use serde::Serialize;
 use serde_json::Value;
 
+pub(crate) const PRIORITY_PROTOCOL: &str = "endless-drawing.msgpack.v4";
 pub(crate) const MANIFEST_PROTOCOL: &str = "endless-drawing.msgpack.v3";
 pub(crate) const MSGPACK_PROTOCOL: &str = "endless-drawing.msgpack.v2";
 pub(crate) const JSON_PROTOCOL: &str = "endless-drawing.json.v1";
@@ -18,6 +19,7 @@ pub(crate) enum Profile {
     Json,
     MessagePack,
     Manifest,
+    Priority,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -47,6 +49,7 @@ impl Profile {
             Self::Json => 1,
             Self::MessagePack => 2,
             Self::Manifest => 3,
+            Self::Priority => 4,
         }
     }
 
@@ -71,7 +74,7 @@ impl Profile {
         let bytes = self.encode(value)?;
         Ok(match self {
             Self::Json => Message::Text(String::from_utf8(bytes).map_err(|_| ())?.into()),
-            Self::MessagePack | Self::Manifest => Message::Binary(bytes.into()),
+            Self::MessagePack | Self::Manifest | Self::Priority => Message::Binary(bytes.into()),
         })
     }
 
@@ -80,7 +83,7 @@ impl Profile {
             (Self::Json, Message::Text(text)) => {
                 serde_json::from_str(&text).map_err(|_| DecodeError::Invalid)
             }
-            (Self::MessagePack | Self::Manifest, Message::Binary(bytes)) => {
+            (Self::MessagePack | Self::Manifest | Self::Priority, Message::Binary(bytes)) => {
                 validate(&bytes, CLIENT_BYTES)?;
                 rmp_serde::from_slice(&bytes).map_err(|_| DecodeError::Invalid)
             }
@@ -239,7 +242,7 @@ mod tests {
 
     fn directory() -> std::path::PathBuf {
         let version = std::env::var("WS_FIXTURES_VERSION").unwrap_or_else(|_| "ws-v2".into());
-        assert!(["ws-v2", "ws-v3"].contains(&version.as_str()));
+        assert!(["ws-v2", "ws-v3", "ws-v4"].contains(&version.as_str()));
         std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("tests/fixtures")
             .join(version)
@@ -247,7 +250,7 @@ mod tests {
 
     #[test]
     fn reads_typescript_and_rust_fixture_corpus() {
-        for version in ["ws-v2", "ws-v3"] {
+        for version in ["ws-v2", "ws-v3", "ws-v4"] {
             let directory = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
                 .join("tests/fixtures")
                 .join(version);

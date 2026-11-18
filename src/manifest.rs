@@ -10,11 +10,10 @@ use uuid::Uuid;
 
 use crate::{
     codec::Profile,
-    domain::Bounds,
     protocol::{ErrorCode, ServerMessage},
     realtime::Realtime,
     session::OwnerDigest,
-    snapshot::{SnapshotStream, deliver_strokes},
+    snapshot::{Area, SnapshotStream, deliver_strokes},
     storage,
 };
 
@@ -35,14 +34,14 @@ pub(crate) struct FetchRequest {
 struct Context {
     service: Realtime,
     owner: OwnerDigest,
-    bounds: Bounds,
+    area: Area,
     id: String,
 }
 
 pub(crate) fn start(
     transaction: Transaction<'static, Postgres>,
     owner: OwnerDigest,
-    bounds: Bounds,
+    area: Area,
     id: String,
     service: Realtime,
     permit: OwnedSemaphorePermit,
@@ -52,7 +51,7 @@ pub(crate) fn start(
     let context = Context {
         service,
         owner,
-        bounds,
+        area,
         id,
     };
     let task = tokio::spawn(async move {
@@ -89,41 +88,44 @@ async fn stream(
         .map_err(|_| ())?;
     let mut entries = Vec::new();
     let mut points = 0_usize;
-    let mut after = 0;
-    loop {
-        let page = storage::manifest_page(
-            &mut transaction,
-            context.bounds,
-            after,
-            context.service.settings.snapshot_page_size,
-        )
-        .await
-        .map_err(|_| ())?;
-        if page.is_empty() {
-            break;
-        }
-        for entry in page {
-            after = entry.seq;
-            if entry.point_count < 1
-                || entry.point_count > 2000
-                || entry.seq <= 0
-                || entry.seq > 9_007_199_254_740_991
-            {
-                return Err(());
+    for pass in context.area.passes() {
+        let mut after = 0;
+        loop {
+            let page = storage::manifest_partition_page(
+                &mut transaction,
+                context.area.bounds,
+                after,
+                context.service.settings.snapshot_page_size,
+                pass,
+            )
+            .await
+            .map_err(|_| ())?;
+            if page.is_empty() {
+                break;
             }
-            points += usize::try_from(entry.point_count).map_err(|_| ())?;
-            if entries.len() >= MAX_STROKES || points > MAX_POINTS {
-                // Do not claim a complete membership set after truncation.
-                drop(transaction);
-                return sender
-                    .send(ServerMessage::SnapshotFallback {
-                        subscription_id: context.id.clone(),
-                        reason: "scene_limit",
-                    })
-                    .await
-                    .map_err(|_| ());
+            for entry in page {
+                after = entry.seq;
+                if entry.point_count < 1
+                    || entry.point_count > 2000
+                    || entry.seq <= 0
+                    || entry.seq > 9_007_199_254_740_991
+                {
+                    return Err(());
+                }
+                points += usize::try_from(entry.point_count).map_err(|_| ())?;
+                if entries.len() >= MAX_STROKES || points > MAX_POINTS {
+                    // Do not claim a complete membership set after truncation.
+                    drop(transaction);
+                    return sender
+                        .send(ServerMessage::SnapshotFallback {
+                            subscription_id: context.id.clone(),
+                            reason: "scene_limit",
+                        })
+                        .await
+                        .map_err(|_| ());
+                }
+                entries.push(entry);
             }
-            entries.push(entry);
         }
     }
     transaction.commit().await.map_err(|_| ())?;

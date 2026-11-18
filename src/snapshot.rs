@@ -15,6 +15,41 @@ use crate::{
     storage,
 };
 
+/// The hint classifies members; it never expands the authoritative area.
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct Area {
+    pub bounds: Bounds,
+    pub visible: Option<Bounds>,
+}
+
+#[derive(Clone, Copy)]
+pub(crate) enum Pass {
+    All,
+    Visible(Bounds),
+    Prefetch(Bounds),
+}
+
+impl Area {
+    pub fn passes(self) -> impl Iterator<Item = Pass> {
+        match self.visible {
+            Some(bounds) => [Some(Pass::Visible(bounds)), Some(Pass::Prefetch(bounds))],
+            None => [Some(Pass::All), None],
+        }
+        .into_iter()
+        .flatten()
+    }
+}
+
+impl Pass {
+    pub fn filter(self) -> Option<(Bounds, bool)> {
+        match self {
+            Self::All => None,
+            Self::Visible(bounds) => Some((bounds, true)),
+            Self::Prefetch(bounds) => Some((bounds, false)),
+        }
+    }
+}
+
 pub(crate) struct SnapshotStream {
     pub(crate) receiver: mpsc::Receiver<ServerMessage>,
     pub(crate) requests: Option<mpsc::Sender<crate::manifest::FetchRequest>>,
@@ -31,7 +66,7 @@ impl SnapshotStream {
     pub fn start(
         transaction: Transaction<'static, Postgres>,
         owner: OwnerDigest,
-        bounds: Bounds,
+        area: Area,
         id: String,
         settings: Arc<RealtimeSettings>,
         profile: Profile,
@@ -41,15 +76,7 @@ impl SnapshotStream {
         let task = tokio::spawn(async move {
             let result = tokio::time::timeout(
                 settings.snapshot_timeout,
-                stream(
-                    transaction,
-                    &sender,
-                    &owner,
-                    bounds,
-                    &id,
-                    &settings,
-                    profile,
-                ),
+                stream(transaction, &sender, &owner, area, &id, &settings, profile),
             )
             .await;
             if !matches!(result, Ok(Ok(()))) {
@@ -78,7 +105,7 @@ async fn stream(
     mut transaction: Transaction<'static, Postgres>,
     sender: &mpsc::Sender<ServerMessage>,
     owner: &OwnerDigest,
-    bounds: Bounds,
+    area: Area,
     id: &str,
     settings: &RealtimeSettings,
     profile: Profile,
@@ -90,25 +117,33 @@ async fn stream(
         },
     )
     .await?;
-    let mut after = 0;
-    loop {
-        let page = storage::page(&mut transaction, bounds, after, settings.snapshot_page_size)
+    for pass in area.passes() {
+        let mut after = 0;
+        loop {
+            let page = storage::partition_page(
+                &mut transaction,
+                area.bounds,
+                after,
+                settings.snapshot_page_size,
+                pass,
+            )
             .await
             .map_err(|_| ())?;
-        if page.is_empty() {
-            break;
+            if page.is_empty() {
+                break;
+            }
+            if let Some(last) = page.last() {
+                after = last.seq;
+            }
+            deliver_strokes(
+                sender,
+                id,
+                settings,
+                profile,
+                page.into_iter().map(|record| record.public(owner)),
+            )
+            .await?;
         }
-        if let Some(last) = page.last() {
-            after = last.seq;
-        }
-        deliver_strokes(
-            sender,
-            id,
-            settings,
-            profile,
-            page.into_iter().map(|record| record.public(owner)),
-        )
-        .await?;
     }
     transaction.commit().await.map_err(|_| ())?;
     deliver(

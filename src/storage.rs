@@ -173,23 +173,38 @@ pub(crate) async fn delete(
     Ok((existing, changed))
 }
 
-pub(crate) async fn page(
+pub(crate) async fn partition_page(
     connection: &mut PgConnection,
     bounds: Bounds,
     after: i64,
     limit: u32,
+    pass: crate::snapshot::Pass,
 ) -> Result<Vec<StoredStroke>, sqlx::Error> {
-    let query = format!(
-        "SELECT {COLUMNS} FROM strokes WHERE deleted_at IS NULL
-         AND bounds && box(point($1, $2), point($3, $4)) AND seq > $5 ORDER BY seq ASC LIMIT $6"
+    let mut query = format!(
+        "SELECT {COLUMNS} FROM strokes WHERE deleted_at IS NULL AND bounds && box(point($1,$2),point($3,$4)) AND seq > $5"
     );
-    sqlx::query_as::<_, StrokeRow>(&query)
+    if pass.filter().is_some() {
+        query.push_str(" AND (bounds && box(point($7,$8),point($9,$10))) = $11");
+    }
+    query.push_str(" ORDER BY seq ASC LIMIT $6");
+    let request = sqlx::query_as::<_, StrokeRow>(&query)
         .bind(bounds.min_x)
         .bind(bounds.min_y)
         .bind(bounds.max_x)
         .bind(bounds.max_y)
         .bind(after)
-        .bind(i64::from(limit))
+        .bind(i64::from(limit));
+    let request = if let Some((visible, inside)) = pass.filter() {
+        request
+            .bind(visible.min_x)
+            .bind(visible.min_y)
+            .bind(visible.max_x)
+            .bind(visible.max_y)
+            .bind(inside)
+    } else {
+        request
+    };
+    request
         .fetch_all(connection)
         .await?
         .into_iter()
@@ -205,25 +220,38 @@ pub(crate) struct ManifestEntry {
 }
 
 /// Metadata from one consistent snapshot; points are not transferred from PostgreSQL.
-pub(crate) async fn manifest_page(
+pub(crate) async fn manifest_partition_page(
     connection: &mut PgConnection,
     bounds: Bounds,
     after: i64,
     limit: u32,
+    pass: crate::snapshot::Pass,
 ) -> Result<Vec<ManifestEntry>, sqlx::Error> {
-    sqlx::query_as(
-        "SELECT id, seq, jsonb_array_length(points) AS point_count FROM strokes
-        WHERE deleted_at IS NULL AND bounds && box(point($1, $2), point($3, $4))
-        AND seq > $5 ORDER BY seq ASC LIMIT $6",
-    )
-    .bind(bounds.min_x)
-    .bind(bounds.min_y)
-    .bind(bounds.max_x)
-    .bind(bounds.max_y)
-    .bind(after)
-    .bind(i64::from(limit))
-    .fetch_all(connection)
-    .await
+    let mut query = String::from(
+        "SELECT id, seq, jsonb_array_length(points) AS point_count FROM strokes WHERE deleted_at IS NULL AND bounds && box(point($1,$2),point($3,$4)) AND seq > $5",
+    );
+    if pass.filter().is_some() {
+        query.push_str(" AND (bounds && box(point($7,$8),point($9,$10))) = $11");
+    }
+    query.push_str(" ORDER BY seq ASC LIMIT $6");
+    let request = sqlx::query_as(&query)
+        .bind(bounds.min_x)
+        .bind(bounds.min_y)
+        .bind(bounds.max_x)
+        .bind(bounds.max_y)
+        .bind(after)
+        .bind(i64::from(limit));
+    let request = if let Some((visible, inside)) = pass.filter() {
+        request
+            .bind(visible.min_x)
+            .bind(visible.min_y)
+            .bind(visible.max_x)
+            .bind(visible.max_y)
+            .bind(inside)
+    } else {
+        request
+    };
+    request.fetch_all(connection).await
 }
 
 /// Snapshot-member geometry remains immutable after soft deletion. Membership and

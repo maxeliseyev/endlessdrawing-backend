@@ -44,9 +44,15 @@ async fn snapshot_barrier_separates_old_rows_from_buffered_mutations(pool: PgPoo
     let second_id = second.input().id;
     assert!(service.writer.create(second.clone(), owner()).await.is_ok());
     assert!(service.writer.delete(first_id, owner()).await.is_ok());
-    let rows = storage::page(&mut snapshot.transaction, area(), 0, 100)
-        .await
-        .unwrap();
+    let rows = storage::partition_page(
+        &mut snapshot.transaction,
+        area(),
+        0,
+        100,
+        crate::snapshot::Pass::All,
+    )
+    .await
+    .unwrap();
     assert_eq!(rows.len(), 1);
     assert_eq!(
         rows[0].input.id, first_id,
@@ -92,18 +98,30 @@ async fn event_buffer_overflow_is_detected_and_fresh_snapshot_recovers(pool: PgP
         Err(broadcast::error::RecvError::Lagged(_))
     ));
     assert!(
-        storage::page(&mut snapshot.transaction, area(), 0, 100)
-            .await
-            .unwrap()
-            .is_empty()
+        storage::partition_page(
+            &mut snapshot.transaction,
+            area(),
+            0,
+            100,
+            crate::snapshot::Pass::All
+        )
+        .await
+        .unwrap()
+        .is_empty()
     );
     snapshot.transaction.rollback().await.unwrap();
     let mut fresh = service.writer.snapshot().await.ok().unwrap();
     assert_eq!(
-        storage::page(&mut fresh.transaction, area(), 0, 100)
-            .await
-            .unwrap()
-            .len(),
+        storage::partition_page(
+            &mut fresh.transaction,
+            area(),
+            0,
+            100,
+            crate::snapshot::Pass::All
+        )
+        .await
+        .unwrap()
+        .len(),
         4
     );
     fresh.transaction.rollback().await.unwrap();

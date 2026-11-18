@@ -151,6 +151,7 @@ impl RealtimeSettings {
         let mut settings = Self {
             msgpack_enabled: setting(lookup, "WS_MSGPACK_ENABLED", "true")?,
             manifest_enabled: setting(lookup, "WS_MANIFEST_ENABLED", "true")?,
+            priority_enabled: setting(lookup, "WS_PRIORITY_ENABLED", "true")?,
             ..Self::default()
         };
         if let Some(origins) = lookup("ALLOWED_ORIGINS") {

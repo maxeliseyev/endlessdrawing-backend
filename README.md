@@ -2,7 +2,7 @@
 
 Backend общего бесконечного холста на **Rust + Axum + Tokio + SQLx + PostgreSQL**.
 
-Требования: [backend](docs/backend.md), [JSON-протокол v1](docs/protocol.md), [MessagePack v2](docs/protocol-v2-msgpack.md), [frontend](docs/frontend.md).
+Требования: [backend](docs/backend.md), [JSON-протокол v1](docs/protocol.md), [MessagePack v2](docs/protocol-v2-msgpack.md), [manifest v3](docs/protocol-v3-manifest.md), [visible-first v4](docs/protocol-v4-priority.md), [frontend](docs/frontend.md).
 
 Эксплуатация: [GitHub Actions → закрытый VPS-стенд](docs/deployment.md), [зашифрованные внешние бэкапы](docs/backups.md), [Telegram monitoring](docs/monitoring.md), [least-privilege DB roles](docs/database-roles.md), [закрытый HTTPS/Caddy](docs/https.md), [gates публичного запуска](docs/publication.md). Модерация: [Admin API](docs/admin-api.md), [закрытый provisioning / Touch ID](docs/admin-operations.md), [совместная интеграция frontend/backend](docs/admin-integration.md).
 
@@ -210,3 +210,5 @@ deploy/          # private staging Compose, explicit bootstrap, activation/rollb
 Dockerfile       # non-root Rust runtime + separately built Vite dist
 .github/workflows/deploy.yml # manual verified GitHub Actions deployment
 ```
+
+M3 реализован локально: `endless-drawing.msgpack.v4` с hint видимой области, одним согласованным full/cached snapshot и откатом на v3/v2/JSON. Выбор v4 отключается `WS_PRIORITY_ENABLED=false`; серверный Compose должен передавать этот флаг (Actions обновляет образ, но не Compose). Новых DB migrations нет. Нормативный контракт — [protocol-v4-priority.md](docs/protocol-v4-priority.md); браузерные замеры — frontend `docs/loading-performance.md`. Production этим изменением ещё не обновлялся.

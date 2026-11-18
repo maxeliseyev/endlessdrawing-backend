@@ -11,6 +11,8 @@ pub struct RealtimeSettings {
     pub msgpack_enabled: bool,
     /// Allow manifest/missing-geometry v3 when binary transport is enabled.
     pub manifest_enabled: bool,
+    /// Allow visible-first v4 when manifest/binary transport is enabled.
+    pub priority_enabled: bool,
     pub max_message_bytes: usize,
     pub mutation_queue_capacity: usize,
     pub event_buffer_capacity: usize,
@@ -46,6 +48,7 @@ impl Default for RealtimeSettings {
             max_connections: 256,
             msgpack_enabled: true,
             manifest_enabled: true,
+            priority_enabled: true,
             max_message_bytes: 128 * 1024,
             mutation_queue_capacity: 128,
             event_buffer_capacity: 256,

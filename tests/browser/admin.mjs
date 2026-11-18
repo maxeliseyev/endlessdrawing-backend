@@ -148,7 +148,7 @@ try {
   expect(await admin.evaluate(() => document.cookie.includes('__Host-ed-admin'))).toBe(false);
   expect(await admin.evaluate(() => ({ ...localStorage, ...sessionStorage }))).toEqual({});
   step = 'read-only manifest v3 refresh reuses geometry on real HTTPS';
-  expect(worldFrames.find((m) => m.type === 'hello.ack')?.protocol_version).toBe(3);
+  expect(worldFrames.find((m) => m.type === 'hello.ack')?.protocol_version).toBe(4);
   const refresh = async () => {
     const from = worldFrames.length;
     await admin.getByRole('button', { name: 'Reload area', exact: true }).click();
