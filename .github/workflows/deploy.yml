@@ -1,20 +1,26 @@
-name: Deploy staging
+name: Deploy production
 
-# Initially explicit/manual: public launch is blocked on moderation and frontend integration.
+# main is protected (PR + green CI): every merge to backend main deploys, and so does every
+# frontend main merge, whose CI dispatches this workflow with its commit SHA (Actions-only token).
+# Docs-only commits never deploy. Manual runs remain for redeploy/rollback of a chosen frontend SHA.
 on:
+  push:
+    branches: [main]
+    paths-ignore: ['docs/**', '**/*.md']
   workflow_dispatch:
     inputs:
       frontend_ref:
-        description: 'Reviewed frontend commit SHA with shared public canvas and separate admin entry'
+        description: 'Frontend commit SHA (default: current frontend main)'
         type: string
-        required: true
+        required: false
         default: main
 
 permissions:
   contents: read
 
+# One deploy at a time; a newer pending run replaces an older pending one (both build the latest mains).
 concurrency:
-  group: endlessdrawing-staging
+  group: endlessdrawing-production
   cancel-in-progress: false
 
 jobs:
@@ -48,7 +54,7 @@ jobs:
       - uses: actions/checkout@v4
         with:
           repository: maxeliseyev/endlessdrawing-frontend
-          ref: ${{ inputs.frontend_ref }}
+          ref: ${{ inputs.frontend_ref || 'main' }}
           path: frontend-source
           # Needed only if the separate frontend repo is private; read-only contents access.
           token: ${{ secrets.FRONTEND_READ_TOKEN || github.token }}
@@ -144,7 +150,7 @@ jobs:
     needs: build
     runs-on: ubuntu-latest
     timeout-minutes: 30
-    # Configure allowed branch main + required reviewers before adding SSH secrets.
+    # Environment secrets hold the SSH key; its deployment branch policy allows main only.
     environment: staging
     env:
       DEPLOY_HOST: ${{ vars.DEPLOY_HOST }}
@@ -186,5 +192,8 @@ jobs:
         env:
           RELEASE_ID: ${{ needs.build.outputs.release }}
         run: |
-          echo "### Private staging release: $RELEASE_ID" >> "$GITHUB_STEP_SUMMARY"
-          echo 'App is bound to VPS loopback port 8080. Use an SSH tunnel; no public launch.' >> "$GITHUB_STEP_SUMMARY"
+          echo "### Production release: $RELEASE_ID" >> "$GITHUB_STEP_SUMMARY"
+
+  smoke:
+    needs: deploy
+    uses: ./.github/workflows/public-smoke.yml

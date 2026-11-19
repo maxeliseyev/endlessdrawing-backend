@@ -12,7 +12,7 @@ Frontend: `https://github.com/maxeliseyev/endlessdrawing-frontend`, локаль
 
 ## 1. Путь релиза
 
-Workflow `.github/workflows/deploy.yml` в backend-репозитории, Actions → **Deploy staging** → Run workflow:
+Workflow `.github/workflows/deploy.yml` в backend-репозитории — **Deploy production**. С 19.11.2026 он запускается сам (поток изменений — ниже), вручную — Actions → Deploy production → Run workflow (повтор или откат на выбранный `frontend_ref`):
 
 1. Переиспользовать Backend CI: shell deployment tests, Rust fmt/clippy, все PostgreSQL/WS-тесты.
 2. Checkout backend выбранного запуска и отдельного frontend на `frontend_ref`; для release использовать полный проверенный commit SHA (теперь требуется public WS и `test:integration`, например `5cc6de7`).
@@ -26,7 +26,18 @@ Workflow `.github/workflows/deploy.yml` в backend-репозитории, Actio
 
 GHCR и registry-token на сервере не нужны: используется `docker image load` по проверенному SSH. Доступ к приватному frontend-репозиторию настраивается отдельно read-only token.
 
-Сейчас workflow **только ручной** (`workflow_dispatch`). Ни PR, ни push, ни frontend commit сами не выкладываются. После стабилизации можно включить `push main` и отдельный frontend dispatch с GitHub App; не добавлять широкий cross-repo write PAT только ради первого стенда.
+### Поток изменений (решение владельца 19.11.2026)
+
+```
+ветка → PR → зелёный CI → merge в main → Deploy production → Public smoke
+```
+
+- `main` во frontend и backend защищён: только PR с зелёным CI, без force-push, правило действует и для администраторов. Прямой push в `main` не делать никому, включая агентов.
+- Merge в backend `main` запускает deploy (push trigger). Коммиты, меняющие только `docs/**` и `*.md`, не выкладываются.
+- Merge во frontend `main` — его CI после зелёных проверок вызывает этот workflow через `workflow_dispatch` с `frontend_ref=<sha>`. Токен `BACKEND_DEPLOY_TOKEN` в секретах frontend — fine-grained, только репозиторий backend, только **Actions: read and write** (запуск workflow, без доступа к коду). Широкий cross-repo PAT с contents:write не нужен.
+- Один deploy за раз (`concurrency: endlessdrawing-production`); более новый ожидающий запуск заменяет старый ожидающий, оба собирают актуальные `main`.
+- Backend CI (`ci.yml`) — обязательная проверка PR; на `main` он выполняется внутри deploy (`verify`).
+- После deploy автоматически выполняется `public-smoke.yml`.
 
 ## 2. Однократный bootstrap VPS
 
@@ -124,7 +135,7 @@ Workflow использует `StrictHostKeyChecking=yes`, без runtime keysca
 1. Закоммитить/запушить backend, включая realtime-файлы, Dockerfile, `deploy/` и workflows.
 2. Убедиться, что выбранный frontend commit тоже запушен; локальные незакоммиченные файлы Actions не увидит.
 3. Выполнить bootstrap, настроить environment, secrets и protected branch.
-4. Actions → Deploy staging → `main`, `frontend_ref=<проверенный SHA>` → одобрить deployment.
+4. Actions → Deploy production → `main`, `frontend_ref=<проверенный SHA>`.
 5. Проверить, что job завершён успешно. Локально открыть туннель:
 
 ```bash

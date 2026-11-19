@@ -1,9 +1,10 @@
 name: Backend CI
 
+# PRs (required check for protected main); merges to main run it inside Deploy production.
 on:
-  push:
   pull_request:
   workflow_call:
+  workflow_dispatch:
 
 permissions:
   contents: read
