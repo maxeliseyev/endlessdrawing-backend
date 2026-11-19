@@ -133,6 +133,9 @@ pub(crate) async fn execute_hide(
         "INSERT INTO moderation_operation_strokes(operation_id, stroke_id, outcome)
          SELECT $1, id, CASE WHEN id = ANY($2) THEN 'hidden' ELSE 'already_hidden' END FROM strokes WHERE id = ANY($3)",
     ).bind(input.id).bind(&result.hidden).bind(&input.ids).execute(&mut *transaction).await?;
+    // A hide also settles the report queue for these strokes (held ones stay hidden).
+    super::reports::release_holds(&mut transaction, &input.ids, "hidden").await?;
+    super::reports::close_reports(&mut transaction, &input.ids, "actioned").await?;
     auth::audit(&mut transaction, Some(proof.account_id), "strokes_hidden").await?;
     transaction
         .commit()
@@ -160,9 +163,10 @@ impl super::AdminService {
         &self,
         headers: &axum::http::HeaderMap,
         id: Uuid,
-    ) -> Result<HideResult, AdminError> {
+    ) -> Result<serde_json::Value, AdminError> {
+        // Hide, dismiss and ban results share the operation table; their shapes differ.
         let (_, proof, _) = self.session(headers, false).await?;
-        let result: Json<HideResult> = sqlx::query_scalar(
+        let result: Json<serde_json::Value> = sqlx::query_scalar(
             "SELECT result FROM moderation_operations WHERE id = $1 AND actor_id = $2",
         )
         .bind(id)

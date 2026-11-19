@@ -1,0 +1,11 @@
+[Unit]
+Description=Check for new moderation reports every minute
+
+[Timer]
+OnBootSec=1min
+OnUnitActiveSec=1min
+AccuracySec=10s
+Unit=endlessdrawing-reports.service
+
+[Install]
+WantedBy=timers.target

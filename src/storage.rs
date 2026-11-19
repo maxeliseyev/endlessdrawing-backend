@@ -178,6 +178,24 @@ pub(crate) async fn delete(
     Ok((existing, changed))
 }
 
+/// Current records by id (any state), for publishing restored strokes.
+pub(crate) async fn load(
+    connection: &mut PgConnection,
+    ids: &[Uuid],
+) -> Result<Vec<StoredStroke>, sqlx::Error> {
+    if ids.is_empty() {
+        return Ok(Vec::new());
+    }
+    let query = format!("SELECT {COLUMNS} FROM strokes WHERE id = ANY($1) ORDER BY seq");
+    sqlx::query_as::<_, StrokeRow>(&query)
+        .bind(ids)
+        .fetch_all(connection)
+        .await?
+        .into_iter()
+        .map(TryInto::try_into)
+        .collect()
+}
+
 async fn banned(connection: &mut PgConnection, owner: &OwnerDigest) -> Result<bool, sqlx::Error> {
     sqlx::query_scalar("SELECT EXISTS (SELECT 1 FROM banned_owners WHERE owner_digest = $1)")
         .bind(owner.as_bytes().as_slice())

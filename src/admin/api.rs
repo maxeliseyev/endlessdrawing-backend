@@ -65,6 +65,9 @@ pub(super) fn router(service: Option<AdminService>, static_dir: Option<PathBuf>)
         .route("/api/admin/logout", post(logout))
         .route("/api/admin/strokes/hide", post(hide))
         .route("/api/admin/operations/{id}", get(operation))
+        .route("/api/admin/reports", get(reports))
+        .route("/api/admin/reports/dismiss", post(dismiss))
+        .route("/api/admin/bans", post(ban))
         .route(
             "/api/admin/{*path}",
             any(|| async { StatusCode::NOT_FOUND }),
@@ -361,6 +364,31 @@ async fn hide(
     let (_, proof, _) = service.session(&headers, true).await?;
     let input = body(input)?.validate()?;
     Ok(Json(service.0.writer.admin_hide(proof, input).await?).into_response())
+}
+async fn reports(State(state): State<Routes>, headers: HeaderMap) -> Result<Response, AdminError> {
+    let service = enabled(&state)?;
+    service.session(&headers, false).await?;
+    Ok(Json(super::reports::queue(&service.0.pool).await?).into_response())
+}
+async fn dismiss(
+    State(state): State<Routes>,
+    headers: HeaderMap,
+    input: Result<Json<super::reports::DecisionInput>, JsonRejection>,
+) -> Result<Response, AdminError> {
+    let service = enabled(&state)?;
+    let (_, proof, _) = service.session(&headers, true).await?;
+    let decision = body(input)?.validate(super::reports::DecisionKind::Dismiss)?;
+    Ok(Json(service.0.writer.admin_dismiss(proof, decision).await?).into_response())
+}
+async fn ban(
+    State(state): State<Routes>,
+    headers: HeaderMap,
+    input: Result<Json<super::reports::DecisionInput>, JsonRejection>,
+) -> Result<Response, AdminError> {
+    let service = enabled(&state)?;
+    let (_, proof, _) = service.session(&headers, true).await?;
+    let decision = body(input)?.validate(super::reports::DecisionKind::Ban)?;
+    Ok(Json(service.0.writer.admin_ban(proof, decision).await?).into_response())
 }
 async fn operation(
     State(state): State<Routes>,

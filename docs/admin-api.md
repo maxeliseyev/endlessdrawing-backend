@@ -113,6 +113,27 @@ Batch атомарный: неизвестный UUID → 404 и ни одног
 
 После потери ответа проверить operation или повторить **тот же** UUID/payload. Не объявлять успех до ответа; при новом входе не пересылать старое скрытие автоматически. В публичный WS идут обычные stroke.deleted без reason/actor. Snapshot/reconnect и undo не воскрешают скрытое.
 
+## 2a. Жалобы (App Review 1.2)
+
+Контракт WS-жалоб — [protocol-v5-safety.md](protocol-v5-safety.md). Те же сессия, MFA, CSRF (для POST), rate limit и аудит, что у hide.
+
+`GET /api/admin/reports` — очередь открытых жалоб, агрегированная по штрихам, до 200 штрихов: удержанные порогом первыми, затем по последней жалобе.
+
+```json
+{"open_reports":2,"items":[{"stroke_id":"…","reports":3,"reporters":3,"reasons":["hate","spam"],"block_requests":2,
+  "first_at":"2026-11-19T09:00:00Z","last_at":"2026-11-19T09:05:00Z","held":true,"visible":false,"x":12.5,"y":-40.0}]}
+```
+
+Решения (тело как у hide: `operation_id`, 1–100 различных `stroke_ids`, `reason`; тот же id + actor + нормализованный payload → тот же результат без второго broadcast; другой payload или другое действие под тем же id → 409; неизвестный UUID → 404 без изменений):
+
+- **Скрыть** — существующий `POST /api/admin/strokes/hide`. Дополнительно закрывает открытые жалобы на эти штрихи (`actioned`) и удержание (`hidden`).
+- `POST /api/admin/reports/dismiss` → `{"operation_id","restored":[…],"dismissed_reports":n}`. Закрывает жалобы (`dismissed`); удержанные порогом штрихи снова публичны (`stroke.created` со старым seq).
+- `POST /api/admin/bans` → `{"operation_id","banned_authors":n,"hidden":[…]}`. Банит авторов выбранных штрихов, скрывает все их видимые штрихи (`stroke.deleted` каждому подписчику), закрывает их жалобы и удержания. Бан действует на сессию автора: create/report → `banned`.
+
+`GET /api/admin/operations/{id}` возвращает результат любой из трёх операций в её форме.
+
+Уведомление: VPS-монитор (`endlessdrawing-monitor reports`, таймер `endlessdrawing-reports.timer`, раз в минуту) читает loopback-only `/internal/moderation/summary` и пишет в Telegram о новых жалобах и о жалобе, ждущей больше 20 часов. Только счётчики и ссылка на `/admin/`.
+
 ## 3. Закрытое enrollment (не обязательный первый UI-этап)
 
 Аккаунт и одноразовый enrollment token создаются CLI по SSH, никогда публичной регистрацией. Токен передаётся только HTTPS body и не даёт административную сессию. Enrollment UI — отдельный режим внутри admin entry без публичных ссылок. Если frontend пока его не реализует, сообщить явно: production provisioning останется заблокирован.

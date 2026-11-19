@@ -30,7 +30,8 @@ install -o root -g root -m 0755 "$source_dir/db-roles.py" /usr/local/sbin/endles
 if [[ ! -e /etc/endlessdrawing/backup.env ]]; then
     install -o root -g root -m 0600 "$source_dir/backup.env.example" /etc/endlessdrawing/backup.env
 fi
-for unit in endlessdrawing-backup.service endlessdrawing-backup.timer endlessdrawing-monitor.service endlessdrawing-monitor.timer; do
+for unit in endlessdrawing-backup.service endlessdrawing-backup.timer endlessdrawing-monitor.service endlessdrawing-monitor.timer \
+    endlessdrawing-reports.service endlessdrawing-reports.timer; do
     install -o root -g root -m 0644 "$source_dir/systemd/$unit" "/etc/systemd/system/$unit"
 done
 # Prepared snippets only. No replacement of /etc/caddy/Caddyfile, service reload, or ACME action.

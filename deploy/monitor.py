@@ -245,6 +245,50 @@ def notification(state, issues, details, latest, now):
     return None
 
 
+REASONS = {'sexual': 'сексуальное', 'violence': 'насилие', 'hate': 'ненависть/травля',
+           'illegal': 'незаконное', 'spam': 'спам', 'other': 'другое'}
+OVERDUE_S = 20 * 3600
+
+
+def moderation_summary():
+    """Counts from the app's loopback-only endpoint; never strokes, ids or digests."""
+    with urllib.request.urlopen('http://127.0.0.1:8080/internal/moderation/summary', timeout=5) as reply:
+        body = json.loads(reply.read(8192))
+    keys = ('open_reports', 'held', 'latest_report_seq', 'oldest_open_age_s')
+    if not isinstance(body, dict) or not all(isinstance(body.get(key), int) and body[key] >= 0 for key in keys):
+        raise ValueError('Invalid moderation summary')
+    reasons = body.get('open_by_reason', {})
+    if not isinstance(reasons, dict) or not all(key in REASONS and isinstance(value, int) for key, value in reasons.items()):
+        raise ValueError('Invalid moderation summary')
+    return body
+
+
+def report_notice(state, summary, now):
+    """One message per batch of new reports; a reminder when one waits >20 h (at most every 6 h).
+    Returns (text, new_state) or (None, new_state). The first run only records the position,
+    unless something is already open."""
+    seen = state.get('latest_report_seq')
+    latest = summary['latest_report_seq']
+    new_state = dict(state, latest_report_seq=latest)
+    lines = []
+    if (seen is None and summary['open_reports']) or (seen is not None and latest > seen):
+        fresh = latest - seen if seen is not None else summary['open_reports']
+        lines.append(f'🚩 Endless Drawing: новых жалоб — {fresh}.')
+    overdue = summary['open_reports'] and summary['oldest_open_age_s'] >= OVERDUE_S
+    reminded = state.get('overdue_at')
+    if overdue and not lines and (not reminded or age_hours(reminded, now) >= 6):
+        lines.append('⏰ Endless Drawing: жалоба ждёт решения больше 20 часов (обещано ≤ 24 ч).')
+        new_state['overdue_at'] = now.isoformat()
+    if not lines:
+        return None, new_state
+    reasons = ', '.join(f'{REASONS[key]} {value}' for key, value in sorted(summary['open_by_reason'].items()))
+    lines.append(f'Открыто: {summary["open_reports"]}' + (f' ({reasons})' if reasons else '') + '.')
+    if summary['held']:
+        lines.append(f'Скрыто порогом до решения: {summary["held"]}.')
+    lines.append(f'https://{SITE}/admin/')
+    return '\n'.join(lines), new_state
+
+
 def configure(path, chat_id=None):
     if os.geteuid() != 0 or not sys.stdin.isatty() or not sys.stdout.isatty():
         raise MonitorError('Configure only as root in your own trusted interactive TTY, not agent/CI')
@@ -284,6 +328,26 @@ def configure(path, chat_id=None):
     temporary.chmod(0o600); temporary.replace(path)
     token = ''; config.clear()
     SPOOL.mkdir(mode=0o700, parents=True, exist_ok=True)
+    if args.operation == 'reports':
+        with (SPOOL / 'reports.lock').open('a') as lock:
+            try:
+                fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except BlockingIOError:
+                return
+            path = SPOOL / 'reports.json'
+            try:
+                state = read_json(path)
+            except (OSError, ValueError):
+                state = {}
+            try:
+                summary = moderation_summary()
+            except (OSError, ValueError, urllib.error.URLError):
+                return  # The 15-minute health check reports an unavailable app.
+            text, new_state = report_notice(state, summary, now)
+            if text:
+                send(config, text)  # Persist only after Telegram accepted it, so a failure retries.
+            atomic_json(path, new_state)
+        return
     with (SPOOL / 'monitor.lock').open('a') as lock:
         fcntl.flock(lock, fcntl.LOCK_EX)
         atomic_json(SPOOL / 'state.json', {'test_confirmed_at': datetime.now(timezone.utc).isoformat()})
@@ -295,7 +359,7 @@ def configure(path, chat_id=None):
 def main():
     os.umask(0o077)
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('operation', choices=['configure', 'check', 'test', 'drill', 'probe'])
+    parser.add_argument('operation', choices=['configure', 'check', 'test', 'drill', 'probe', 'reports'])
     parser.add_argument('--config', type=Path, default=CONFIG)
     parser.add_argument('--chat-id', help='non-secret destination ID, configure only')
     args = parser.parse_args()
@@ -319,6 +383,26 @@ def main():
         send(config, prefix + recovered[0])
         print('Telegram accepted simulated failure and recovery. Actual monitoring state was not changed.'); return
     SPOOL.mkdir(mode=0o700, parents=True, exist_ok=True)
+    if args.operation == 'reports':
+        with (SPOOL / 'reports.lock').open('a') as lock:
+            try:
+                fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except BlockingIOError:
+                return
+            path = SPOOL / 'reports.json'
+            try:
+                state = read_json(path)
+            except (OSError, ValueError):
+                state = {}
+            try:
+                summary = moderation_summary()
+            except (OSError, ValueError, urllib.error.URLError):
+                return  # The 15-minute health check reports an unavailable app.
+            text, new_state = report_notice(state, summary, now)
+            if text:
+                send(config, text)  # Persist only after Telegram accepted it, so a failure retries.
+            atomic_json(path, new_state)
+        return
     with (SPOOL / 'monitor.lock').open('a') as lock:
         try:
             fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
