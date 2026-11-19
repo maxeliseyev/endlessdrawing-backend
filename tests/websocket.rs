@@ -9,6 +9,7 @@ use endless_drawing_server::{
 };
 use futures_util::{SinkExt, StreamExt};
 use serde_json::{Value, json};
+use sha2::{Digest, Sha256};
 use sqlx::PgPool;
 use tokio::{net::TcpStream, time::timeout};
 use tokio_tungstenite::{
@@ -681,3 +682,5 @@ include!("support/msgpack.rs");
 include!("support/manifest.rs");
 
 include!("support/priority.rs");
+
+include!("support/safety.rs");

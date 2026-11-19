@@ -140,7 +140,8 @@ async fn stream(
                 id,
                 settings,
                 profile,
-                page.into_iter().map(|record| record.public(owner)),
+                page.into_iter()
+                    .map(|record| record.public(owner, profile.safety())),
             )
             .await?;
         }

@@ -34,6 +34,17 @@ impl OwnerDigest {
         Ok(Self(Sha256::digest(bytes).into()))
     }
 
+    /// v5 author tag of `author` (a stored owner digest) as seen by this viewer: stable per
+    /// viewer and author, unrelated across viewers, reveals neither digest. Unpadded base64url,
+    /// 22 characters (docs/protocol-v5-safety.md).
+    pub fn author_tag(&self, author: &[u8]) -> String {
+        let mut hash = Sha256::new();
+        hash.update(b"endless-drawing.author.v1");
+        hash.update(self.0);
+        hash.update(author);
+        URL_SAFE_NO_PAD.encode(&hash.finalize()[..16])
+    }
+
     /// Digest bytes for parameterized database queries; do not expose to clients/logs.
     pub fn as_bytes(&self) -> &[u8; 32] {
         &self.0

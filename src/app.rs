@@ -2,7 +2,15 @@
 
 use std::{path::PathBuf, time::Duration};
 
-use axum::{Json, Router, extract::State, http::StatusCode, routing::get};
+use std::collections::BTreeMap;
+
+use axum::{
+    Json, Router,
+    extract::State,
+    http::{HeaderMap, StatusCode},
+    response::{IntoResponse, Response},
+    routing::get,
+};
 use serde::Serialize;
 use sqlx::PgPool;
 use tower_http::services::ServeDir;
@@ -25,6 +33,7 @@ pub fn router(pool: PgPool, query_timeout: Duration, static_dir: Option<PathBuf>
     let mut router = Router::new()
         .route("/healthz", get(health))
         .route("/readyz", get(ready))
+        .route("/internal/moderation/summary", get(moderation_summary))
         .with_state(AppState {
             pool,
             query_timeout,
@@ -59,6 +68,64 @@ async fn ready(State(state): State<AppState>) -> (StatusCode, Json<Probe>) {
     }
 }
 
+/// Counts only, for the VPS monitor's Telegram notice (docs/protocol-v5-safety.md).
+#[derive(Serialize)]
+struct ModerationSummary {
+    open_reports: i64,
+    held: i64,
+    latest_report_seq: i64,
+    oldest_open_age_s: i64,
+    open_by_reason: BTreeMap<String, i64>,
+}
+
+/// Any proxy-added header means the request came through Caddy, i.e. from the internet:
+/// the summary is only for direct requests to the published loopback port.
+fn proxied(headers: &HeaderMap) -> bool {
+    [
+        "x-forwarded-for",
+        "x-forwarded-proto",
+        "x-forwarded-host",
+        "forwarded",
+        "via",
+    ]
+    .iter()
+    .any(|name| headers.contains_key(*name))
+}
+
+async fn moderation_summary(State(state): State<AppState>, headers: HeaderMap) -> Response {
+    if proxied(&headers) {
+        return StatusCode::NOT_FOUND.into_response();
+    }
+    let query = async {
+        let (open_reports, held, latest_report_seq, oldest_open_age_s): (i64, i64, i64, i64) =
+            sqlx::query_as(
+                "SELECT (SELECT count(*) FROM stroke_reports WHERE status = 'open'),
+                        (SELECT count(*) FROM stroke_holds WHERE released_at IS NULL),
+                        (SELECT coalesce(max(seq), 0) FROM stroke_reports),
+                        (SELECT coalesce(floor(extract(epoch FROM now() - min(created_at)))::bigint, 0)
+                           FROM stroke_reports WHERE status = 'open')",
+            )
+            .fetch_one(&state.pool)
+            .await?;
+        let reasons: Vec<(String, i64)> = sqlx::query_as(
+            "SELECT reason, count(*) FROM stroke_reports WHERE status = 'open' GROUP BY reason",
+        )
+        .fetch_all(&state.pool)
+        .await?;
+        Ok::<_, sqlx::Error>(ModerationSummary {
+            open_reports,
+            held,
+            latest_report_seq,
+            oldest_open_age_s,
+            open_by_reason: reasons.into_iter().collect(),
+        })
+    };
+    match tokio::time::timeout(state.query_timeout, query).await {
+        Ok(Ok(summary)) => Json(summary).into_response(),
+        _ => StatusCode::SERVICE_UNAVAILABLE.into_response(),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use axum::{body::Body, http::Request};
@@ -72,6 +139,24 @@ mod tests {
         PgPoolOptions::new()
             .connect_lazy("postgres://canvas:secret@127.0.0.1:1/canvas")
             .unwrap()
+    }
+
+    #[tokio::test]
+    async fn moderation_summary_is_not_reachable_through_the_proxy() {
+        let router = router(lazy_pool(), Duration::from_millis(50), None);
+        for header in ["x-forwarded-for", "forwarded", "via"] {
+            let response = router
+                .clone()
+                .oneshot(
+                    Request::get("/internal/moderation/summary")
+                        .header(header, "203.0.113.7")
+                        .body(Body::empty())
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+            assert_eq!(response.status(), StatusCode::NOT_FOUND, "{header}");
+        }
     }
 
     #[tokio::test]

@@ -40,7 +40,42 @@ pub(crate) enum ClientMessage {
     },
     #[serde(rename = "stroke.delete")]
     Delete { request_id: String, stroke_id: Uuid },
+    /// v5 only (docs/protocol-v5-safety.md).
+    #[serde(rename = "stroke.report")]
+    Report {
+        request_id: String,
+        stroke_ids: Vec<Uuid>,
+        reason: ReportReason,
+        block_author: bool,
+    },
 }
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum ReportReason {
+    Sexual,
+    Violence,
+    Hate,
+    Illegal,
+    Spam,
+    Other,
+}
+
+impl ReportReason {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Sexual => "sexual",
+            Self::Violence => "violence",
+            Self::Hate => "hate",
+            Self::Illegal => "illegal",
+            Self::Spam => "spam",
+            Self::Other => "other",
+        }
+    }
+}
+
+/// At most this many strokes per report (docs/protocol-v5-safety.md).
+pub(crate) const MAX_REPORT_STROKES: usize = 20;
 
 fn optional_viewport<'de, D: serde::Deserializer<'de>>(
     deserializer: D,
@@ -85,6 +120,9 @@ pub(crate) struct PublicStroke {
     pub input: StrokeInput,
     pub seq: i64,
     pub own: bool,
+    /// v5 only: per-viewer author tag (docs/protocol-v5-safety.md).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub author: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -98,6 +136,8 @@ pub(crate) enum AckResult {
         seq: i64,
         already_deleted: bool,
     },
+    #[serde(rename = "stroke.report")]
+    Report { report_id: Uuid },
 }
 
 #[derive(Serialize, Debug, Clone, Copy, PartialEq)]
@@ -196,6 +236,8 @@ pub(crate) enum ErrorCode {
     RateLimited,
     ResyncRequired,
     InternalError,
+    /// v5: this session was banned by a moderator; creates and reports are refused.
+    Banned,
 }
 
 impl ErrorCode {
@@ -212,6 +254,7 @@ impl ErrorCode {
             Self::RateLimited => "operation limit exceeded; retry later",
             Self::ResyncRequired => "subscribe again to obtain a fresh snapshot",
             Self::InternalError => "operation could not be completed",
+            Self::Banned => "this session can no longer draw or report",
         }
     }
 

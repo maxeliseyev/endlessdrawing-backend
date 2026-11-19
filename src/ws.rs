@@ -21,13 +21,18 @@ use tokio::{
 };
 use tokio_tungstenite::tungstenite::Error as SocketError;
 
+use uuid::Uuid;
+
 use crate::{
     codec::{
         CLIENT_BYTES, JSON_PROTOCOL, MANIFEST_PROTOCOL, MSGPACK_PROTOCOL, PRIORITY_PROTOCOL,
-        Profile,
+        Profile, SAFETY_PROTOCOL,
     },
     domain::Bounds,
-    protocol::{ClientMessage, ErrorCode, ServerMessage, SpawnPoint, intersects, valid_id},
+    protocol::{
+        AckResult, ClientMessage, ErrorCode, MAX_REPORT_STROKES, ServerMessage, SpawnPoint,
+        intersects, valid_id,
+    },
     realtime::{Event, Realtime},
     session::OwnerDigest,
     snapshot::SnapshotStream,
@@ -67,11 +72,12 @@ async fn upgrade(
         .filter_map(|value| value.to_str().ok())
         .flat_map(|value| value.split(',').map(str::trim))
         .collect();
-    let selected = if service.settings.msgpack_enabled
+    let v4 = service.settings.msgpack_enabled
         && service.settings.manifest_enabled
-        && service.settings.priority_enabled
-        && offered.contains(&PRIORITY_PROTOCOL)
-    {
+        && service.settings.priority_enabled;
+    let selected = if v4 && service.settings.safety_enabled && offered.contains(&SAFETY_PROTOCOL) {
+        Some(SAFETY_PROTOCOL)
+    } else if v4 && offered.contains(&PRIORITY_PROTOCOL) {
         Some(PRIORITY_PROTOCOL)
     } else if service.settings.msgpack_enabled
         && service.settings.manifest_enabled
@@ -87,7 +93,9 @@ async fn upgrade(
     } else {
         None
     };
-    let profile = if selected == Some(PRIORITY_PROTOCOL) {
+    let profile = if selected == Some(SAFETY_PROTOCOL) {
+        Profile::Safety
+    } else if selected == Some(PRIORITY_PROTOCOL) {
         Profile::Priority
     } else if selected == Some(MANIFEST_PROTOCOL) {
         Profile::Manifest
@@ -344,7 +352,7 @@ async fn connection(
                         subscription.as_ref().and_then(|current| {
                             if !intersects(current.bounds, event.bounds()?) { return None; }
                             Some(match event.as_ref() {
-                                Event::Created(stroke) => ServerMessage::Created { subscription_id: current.id.clone(), stroke: stroke.public(&owner) },
+                                Event::Created(stroke) => ServerMessage::Created { subscription_id: current.id.clone(), stroke: stroke.public(&owner, profile.safety()) },
                                 Event::Deleted { id, seq, .. } => ServerMessage::Deleted { subscription_id: current.id.clone(), stroke_id: *id, seq: *seq },
                                 Event::Reset => return None,
                             })
@@ -420,7 +428,7 @@ async fn command(
             bounds,
             visible_bounds,
         } => {
-            if cached && !matches!(profile, Profile::Manifest | Profile::Priority) {
+            if cached && !profile.manifest() {
                 return Some(ErrorCode::InvalidMessage.response(None, Some(subscription_id)));
             }
             if !valid_id(&subscription_id) {
@@ -433,7 +441,7 @@ async fn command(
                 Ok(bounds) => bounds,
                 Err(code) => return Some(code.response(None, Some(subscription_id))),
             };
-            if visible_bounds.is_some() != (profile == Profile::Priority) {
+            if visible_bounds.is_some() != profile.visible_first() {
                 return Some(ErrorCode::InvalidMessage.response(None, Some(subscription_id)));
             }
             let visible = match visible_bounds {
@@ -480,6 +488,7 @@ async fn command(
                             subscription_id.clone(),
                             service.clone(),
                             permit,
+                            profile,
                         )
                     } else {
                         SnapshotStream::start(
@@ -509,7 +518,7 @@ async fn command(
             stroke_ids,
             final_batch,
         } => {
-            if !matches!(profile, Profile::Manifest | Profile::Priority) {
+            if !profile.manifest() {
                 return Some(ErrorCode::InvalidMessage.response(None, Some(subscription_id)));
             }
             // Stale requests cannot terminate a replacement subscription.
@@ -546,7 +555,50 @@ async fn command(
                 }
             };
             Some(match result {
-                Ok(result) => ServerMessage::Ack { request_id, result },
+                Ok(mut result) => {
+                    if let (true, AckResult::Create { stroke }) = (profile.safety(), &mut result) {
+                        stroke.author = Some(owner.author_tag(owner.as_bytes()));
+                    }
+                    ServerMessage::Ack { request_id, result }
+                }
+                Err(code) => code.response(Some(request_id), None),
+            })
+        }
+        ClientMessage::Report {
+            request_id,
+            stroke_ids,
+            reason,
+            block_author,
+        } => {
+            if !profile.safety() || !valid_id(&request_id) {
+                return Some(ErrorCode::InvalidMessage.response(None, None));
+            }
+            if let Some(report_id) = rates.reported(&request_id) {
+                let result = AckResult::Report { report_id };
+                return Some(ServerMessage::Ack { request_id, result });
+            }
+            let unique: std::collections::HashSet<_> = stroke_ids.iter().collect();
+            if stroke_ids.is_empty()
+                || stroke_ids.len() > MAX_REPORT_STROKES
+                || unique.len() != stroke_ids.len()
+            {
+                return Some(ErrorCode::ValidationFailed.response(Some(request_id), None));
+            }
+            let result = if rates.deletes.allow(Instant::now()) {
+                service
+                    .writer
+                    .report(owner.clone(), stroke_ids, reason, block_author)
+                    .await
+            } else {
+                Err(ErrorCode::RateLimited)
+            };
+            Some(match result {
+                Ok(result) => {
+                    if let AckResult::Report { report_id } = &result {
+                        rates.remember_report(request_id.clone(), *report_id);
+                    }
+                    ServerMessage::Ack { request_id, result }
+                }
                 Err(code) => code.response(Some(request_id), None),
             })
         }
@@ -575,6 +627,8 @@ struct Rates {
     creates: Window,
     deletes: Window,
     subscribes: Window,
+    /// Recent successful `stroke.report` request ids: a retried request returns the same ack.
+    reports: VecDeque<(String, Uuid)>,
 }
 
 impl Rates {
@@ -584,7 +638,22 @@ impl Rates {
             creates: Window::new(service.settings.creates_per_second),
             deletes: Window::new(service.settings.deletes_per_second),
             subscribes: Window::new(service.settings.subscribes_per_second),
+            reports: VecDeque::new(),
         }
+    }
+
+    fn reported(&self, request_id: &str) -> Option<Uuid> {
+        self.reports
+            .iter()
+            .find(|(id, _)| id == request_id)
+            .map(|(_, report)| *report)
+    }
+
+    fn remember_report(&mut self, request_id: String, report_id: Uuid) {
+        if self.reports.len() >= 32 {
+            self.reports.pop_front();
+        }
+        self.reports.push_back((request_id, report_id));
     }
 }
 

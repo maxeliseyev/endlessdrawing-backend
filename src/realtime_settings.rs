@@ -13,6 +13,12 @@ pub struct RealtimeSettings {
     pub manifest_enabled: bool,
     /// Allow visible-first v4 when manifest/binary transport is enabled.
     pub priority_enabled: bool,
+    /// Allow v5 (author tags, reports) when v4 is enabled.
+    pub safety_enabled: bool,
+    /// v5 reports per rolling hour per session (persisted).
+    pub reports_per_hour: usize,
+    /// Distinct open reporters that hold a stroke pending moderation.
+    pub report_hold_threshold: usize,
     pub max_message_bytes: usize,
     pub mutation_queue_capacity: usize,
     pub event_buffer_capacity: usize,
@@ -49,6 +55,9 @@ impl Default for RealtimeSettings {
             msgpack_enabled: true,
             manifest_enabled: true,
             priority_enabled: true,
+            safety_enabled: true,
+            reports_per_hour: 10,
+            report_hold_threshold: 5,
             max_message_bytes: 128 * 1024,
             mutation_queue_capacity: 128,
             event_buffer_capacity: 256,
