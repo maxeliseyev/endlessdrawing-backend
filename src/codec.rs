@@ -6,6 +6,7 @@ use axum::extract::ws::Message;
 use serde::Serialize;
 use serde_json::Value;
 
+pub(crate) const SAFETY_PROTOCOL: &str = "endless-drawing.msgpack.v5";
 pub(crate) const PRIORITY_PROTOCOL: &str = "endless-drawing.msgpack.v4";
 pub(crate) const MANIFEST_PROTOCOL: &str = "endless-drawing.msgpack.v3";
 pub(crate) const MSGPACK_PROTOCOL: &str = "endless-drawing.msgpack.v2";
@@ -20,6 +21,8 @@ pub(crate) enum Profile {
     MessagePack,
     Manifest,
     Priority,
+    /// v4 plus author tags and `stroke.report` (docs/protocol-v5-safety.md).
+    Safety,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -44,12 +47,28 @@ impl Profile {
         self != Self::Json
     }
 
+    /// v3+: cached subscriptions, manifest and fetch.
+    pub fn manifest(self) -> bool {
+        matches!(self, Self::Manifest | Self::Priority | Self::Safety)
+    }
+
+    /// v4+: `visible_bounds` is required in subscriptions.
+    pub fn visible_first(self) -> bool {
+        matches!(self, Self::Priority | Self::Safety)
+    }
+
+    /// v5: author tags on strokes and `stroke.report`.
+    pub fn safety(self) -> bool {
+        self == Self::Safety
+    }
+
     pub fn version(self) -> u8 {
         match self {
             Self::Json => 1,
             Self::MessagePack => 2,
             Self::Manifest => 3,
             Self::Priority => 4,
+            Self::Safety => 5,
         }
     }
 
@@ -74,7 +93,9 @@ impl Profile {
         let bytes = self.encode(value)?;
         Ok(match self {
             Self::Json => Message::Text(String::from_utf8(bytes).map_err(|_| ())?.into()),
-            Self::MessagePack | Self::Manifest | Self::Priority => Message::Binary(bytes.into()),
+            Self::MessagePack | Self::Manifest | Self::Priority | Self::Safety => {
+                Message::Binary(bytes.into())
+            }
         })
     }
 
@@ -83,7 +104,10 @@ impl Profile {
             (Self::Json, Message::Text(text)) => {
                 serde_json::from_str(&text).map_err(|_| DecodeError::Invalid)
             }
-            (Self::MessagePack | Self::Manifest | Self::Priority, Message::Binary(bytes)) => {
+            (
+                Self::MessagePack | Self::Manifest | Self::Priority | Self::Safety,
+                Message::Binary(bytes),
+            ) => {
                 validate(&bytes, CLIENT_BYTES)?;
                 rmp_serde::from_slice(&bytes).map_err(|_| DecodeError::Invalid)
             }

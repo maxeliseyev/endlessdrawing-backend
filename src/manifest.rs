@@ -34,6 +34,7 @@ pub(crate) struct FetchRequest {
 struct Context {
     service: Realtime,
     owner: OwnerDigest,
+    profile: Profile,
     area: Area,
     id: String,
 }
@@ -45,12 +46,14 @@ pub(crate) fn start(
     id: String,
     service: Realtime,
     permit: OwnedSemaphorePermit,
+    profile: Profile,
 ) -> SnapshotStream {
     let (sender, receiver) = mpsc::channel(2);
     let (requests, input) = mpsc::channel(2);
     let context = Context {
         service,
         owner,
+        profile,
         area,
         id,
     };
@@ -201,10 +204,10 @@ async fn stream(
                 sender,
                 id,
                 &context.service.settings,
-                Profile::Manifest,
+                context.profile,
                 ordered
                     .into_iter()
-                    .map(|record| record.public(&context.owner)),
+                    .map(|record| record.public(&context.owner, context.profile.safety())),
             )
             .await?;
         }

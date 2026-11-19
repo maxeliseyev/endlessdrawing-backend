@@ -15,7 +15,7 @@ use crate::{
     admin::{AdminError, HideResult, SessionProof, ValidatedHide, execute_hide},
     config::{ConfigError, RealtimeSettings},
     domain::{Bounds, StrokeLimits, ValidatedStroke},
-    protocol::{AckResult, ErrorCode},
+    protocol::{AckResult, ErrorCode, ReportReason},
     session::OwnerDigest,
     spawn::SpawnPoints,
     storage::{self, StorageError, StoredStroke},
@@ -51,7 +51,17 @@ impl Realtime {
         let shutdown = CancellationToken::new();
         let spawn = SpawnPoints::default();
         spawn.run(pool.clone(), settings.spawn_refresh, shutdown.clone());
-        let worker = tokio::spawn(run_writer(pool.clone(), receiver, events, shutdown.clone()));
+        let policy = storage::ReportPolicy {
+            per_hour: i64::try_from(settings.reports_per_hour).unwrap_or(i64::MAX),
+            hold_threshold: i64::try_from(settings.report_hold_threshold).unwrap_or(i64::MAX),
+        };
+        let worker = tokio::spawn(run_writer(
+            pool.clone(),
+            receiver,
+            events,
+            shutdown.clone(),
+            policy,
+        ));
         let service = Self {
             writer: Writer {
                 sender,
@@ -123,6 +133,13 @@ enum Command {
     Snapshot {
         reply: oneshot::Sender<Result<Snapshot, ErrorCode>>,
     },
+    Report {
+        reporter: OwnerDigest,
+        ids: Vec<Uuid>,
+        reason: ReportReason,
+        block_author: bool,
+        reply: oneshot::Sender<Result<AckResult, ErrorCode>>,
+    },
     AdminHide {
         proof: SessionProof,
         input: ValidatedHide,
@@ -147,6 +164,23 @@ impl Writer {
     pub async fn delete(&self, id: Uuid, owner: OwnerDigest) -> Result<AckResult, ErrorCode> {
         self.request(|reply| Command::Delete { id, owner, reply })
             .await
+    }
+
+    pub async fn report(
+        &self,
+        reporter: OwnerDigest,
+        ids: Vec<Uuid>,
+        reason: ReportReason,
+        block_author: bool,
+    ) -> Result<AckResult, ErrorCode> {
+        self.request(|reply| Command::Report {
+            reporter,
+            ids,
+            reason,
+            block_author,
+            reply,
+        })
+        .await
     }
 
     pub async fn snapshot(&self) -> Result<Snapshot, ErrorCode> {
@@ -191,6 +225,7 @@ async fn run_writer(
     mut receiver: mpsc::Receiver<Command>,
     events: broadcast::Sender<Arc<Event>>,
     shutdown: CancellationToken,
+    policy: storage::ReportPolicy,
 ) {
     loop {
         let command = tokio::select! {
@@ -216,8 +251,9 @@ async fn run_writer(
                     if changed {
                         let _ = events.send(Arc::new(Event::Created(record.clone())));
                     }
+                    // The connection adds the v5 author tag (its own) before sending.
                     AckResult::Create {
-                        stroke: record.public(&owner),
+                        stroke: record.public(&owner, false),
                     }
                 });
                 let _ = reply.send(result.map_err(public_error));
@@ -243,6 +279,32 @@ async fn run_writer(
                         seq: record.seq,
                         already_deleted: !changed,
                     }
+                });
+                let _ = reply.send(result.map_err(public_error));
+            }
+            Command::Report {
+                reporter,
+                ids,
+                reason,
+                block_author,
+                reply,
+            } => {
+                if reply.is_closed() {
+                    continue;
+                }
+                let result = report(&pool, &reporter, &ids, reason, block_author, &policy).await;
+                if matches!(result, Err(StorageError::CommitUnknown(_))) {
+                    let _ = events.send(Arc::new(Event::Reset));
+                }
+                let result = result.map(|(report_id, held)| {
+                    for stroke in held {
+                        let _ = events.send(Arc::new(Event::Deleted {
+                            id: stroke.input.id,
+                            seq: stroke.seq,
+                            bounds: stroke.bounds,
+                        }));
+                    }
+                    AckResult::Report { report_id }
                 });
                 let _ = reply.send(result.map_err(public_error));
             }
@@ -283,6 +345,31 @@ async fn run_writer(
         }
     }
     // Dropping the receiver rejects remaining commands and their reply channels.
+}
+
+async fn report(
+    pool: &PgPool,
+    reporter: &OwnerDigest,
+    ids: &[Uuid],
+    reason: ReportReason,
+    block_author: bool,
+    policy: &storage::ReportPolicy,
+) -> Result<(Uuid, Vec<StoredStroke>), StorageError> {
+    let mut transaction = pool.begin().await?;
+    let result = storage::report(
+        &mut transaction,
+        reporter,
+        ids,
+        reason,
+        block_author,
+        policy,
+    )
+    .await?;
+    transaction
+        .commit()
+        .await
+        .map_err(StorageError::CommitUnknown)?;
+    Ok(result)
 }
 
 async fn create(

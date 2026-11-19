@@ -152,6 +152,9 @@ impl RealtimeSettings {
             msgpack_enabled: setting(lookup, "WS_MSGPACK_ENABLED", "true")?,
             manifest_enabled: setting(lookup, "WS_MANIFEST_ENABLED", "true")?,
             priority_enabled: setting(lookup, "WS_PRIORITY_ENABLED", "true")?,
+            safety_enabled: setting(lookup, "WS_SAFETY_ENABLED", "true")?,
+            reports_per_hour: positive(lookup, "REPORTS_PER_HOUR", 10)?,
+            report_hold_threshold: positive(lookup, "REPORT_HOLD_THRESHOLD", 5)?,
             ..Self::default()
         };
         if let Some(origins) = lookup("ALLOWED_ORIGINS") {
