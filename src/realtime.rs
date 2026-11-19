@@ -12,7 +12,10 @@ use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
 use crate::{
-    admin::{AdminError, HideResult, SessionProof, ValidatedHide, execute_hide},
+    admin::{
+        AdminError, BanResult, Decision, DismissResult, HideResult, SessionProof, ValidatedHide,
+        execute_ban, execute_dismiss, execute_hide,
+    },
     config::{ConfigError, RealtimeSettings},
     domain::{Bounds, StrokeLimits, ValidatedStroke},
     protocol::{AckResult, ErrorCode, ReportReason},
@@ -145,6 +148,16 @@ enum Command {
         input: ValidatedHide,
         reply: oneshot::Sender<Result<HideResult, AdminError>>,
     },
+    AdminDismiss {
+        proof: SessionProof,
+        decision: Decision,
+        reply: oneshot::Sender<Result<DismissResult, AdminError>>,
+    },
+    AdminBan {
+        proof: SessionProof,
+        decision: Decision,
+        reply: oneshot::Sender<Result<BanResult, AdminError>>,
+    },
 }
 
 impl Writer {
@@ -195,6 +208,32 @@ impl Writer {
         self.request(|reply| Command::AdminHide {
             proof,
             input,
+            reply,
+        })
+        .await
+    }
+
+    pub(crate) async fn admin_dismiss(
+        &self,
+        proof: SessionProof,
+        decision: Decision,
+    ) -> Result<DismissResult, AdminError> {
+        self.request(|reply| Command::AdminDismiss {
+            proof,
+            decision,
+            reply,
+        })
+        .await
+    }
+
+    pub(crate) async fn admin_ban(
+        &self,
+        proof: SessionProof,
+        decision: Decision,
+    ) -> Result<BanResult, AdminError> {
+        self.request(|reply| Command::AdminBan {
+            proof,
+            decision,
             reply,
         })
         .await
@@ -317,6 +356,53 @@ async fn run_writer(
                     continue;
                 }
                 let result = execute_hide(&pool, proof, input)
+                    .await
+                    .map(|(result, deleted)| {
+                        for stroke in deleted {
+                            let _ = events.send(Arc::new(Event::Deleted {
+                                id: stroke.id,
+                                seq: stroke.seq,
+                                bounds: stroke.bounds,
+                            }));
+                        }
+                        result
+                    });
+                if matches!(result, Err(AdminError::CommitUnknown)) {
+                    let _ = events.send(Arc::new(Event::Reset));
+                }
+                let _ = reply.send(result);
+            }
+            Command::AdminDismiss {
+                proof,
+                decision,
+                reply,
+            } => {
+                if reply.is_closed() {
+                    continue;
+                }
+                let result =
+                    execute_dismiss(&pool, proof, decision)
+                        .await
+                        .map(|(result, restored)| {
+                            for stroke in restored {
+                                let _ = events.send(Arc::new(Event::Created(stroke)));
+                            }
+                            result
+                        });
+                if matches!(result, Err(AdminError::CommitUnknown)) {
+                    let _ = events.send(Arc::new(Event::Reset));
+                }
+                let _ = reply.send(result);
+            }
+            Command::AdminBan {
+                proof,
+                decision,
+                reply,
+            } => {
+                if reply.is_closed() {
+                    continue;
+                }
+                let result = execute_ban(&pool, proof, decision)
                     .await
                     .map(|(result, deleted)| {
                         for stroke in deleted {

@@ -1465,3 +1465,132 @@ async fn disabled_admin_routes_return_safe_uncached_errors() {
         "admin_unavailable"
     );
 }
+
+#[sqlx::test(migrations = "./migrations")]
+#[ignore = "requires PostgreSQL and DATABASE_URL"]
+async fn report_queue_dismiss_restores_holds_and_ban_hides_every_stroke_of_the_author(
+    pool: PgPool,
+) {
+    let mut fixture = Fixture::new(pool.clone()).await;
+    let mut admin = fixture.enrolled().await;
+    fixture.login(&mut admin, false).await;
+    let (held, reported, unrelated) = (Uuid::new_v4(), Uuid::new_v4(), Uuid::new_v4());
+    let mut author = fixture.socket(1).await;
+    ws_create(&mut author, held).await;
+    ws_create(&mut author, reported).await;
+    let mut other = fixture.socket(3).await;
+    ws_create(&mut other, unrelated).await;
+    // Connected last: its snapshot already holds all three, so only later events arrive.
+    let mut visitor = fixture.socket(2).await;
+    // Reports as the v5 WS path stores them; `held` already crossed the threshold.
+    for (stroke, reason) in [(held, "hate"), (reported, "spam")] {
+        let report = Uuid::new_v4();
+        sqlx::query("INSERT INTO stroke_reports (id, reporter_digest, reason, block_author) VALUES ($1, $2, $3, true)")
+            .bind(report).bind(vec![9u8; 32]).bind(reason).execute(&pool).await.unwrap();
+        sqlx::query("INSERT INTO stroke_report_items (report_id, stroke_id) VALUES ($1, $2)")
+            .bind(report)
+            .bind(stroke)
+            .execute(&pool)
+            .await
+            .unwrap();
+    }
+    sqlx::query("UPDATE strokes SET deleted_at = now() WHERE id = $1")
+        .bind(held)
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query("INSERT INTO stroke_holds (stroke_id) VALUES ($1)")
+        .bind(held)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    let (status, queue, _) = admin
+        .call(&fixture, Method::GET, "/api/admin/reports", None)
+        .await;
+    assert_eq!(status, StatusCode::OK, "{queue}");
+    assert_eq!(queue["open_reports"], 2);
+    assert_eq!(
+        queue["items"][0]["stroke_id"],
+        json!(held),
+        "held strokes first"
+    );
+    assert_eq!(queue["items"][0]["held"], true);
+    assert_eq!(queue["items"][0]["visible"], false);
+    assert_eq!(queue["items"][1]["reasons"], json!(["spam"]));
+
+    // Dismiss: the held stroke is public again, its report closed; idempotent per operation id.
+    let operation = Uuid::new_v4();
+    let payload = hide(operation, vec![held], "not abusive");
+    let (status, result, _) = admin
+        .call(
+            &fixture,
+            Method::POST,
+            "/api/admin/reports/dismiss",
+            Some(payload.clone()),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{result}");
+    assert_eq!(result["restored"], json!([held]));
+    assert_eq!(result["dismissed_reports"], 1);
+    let restored = ws_receive(&mut visitor).await;
+    assert_eq!(restored["type"], "stroke.created");
+    assert_eq!(restored["stroke"]["id"], json!(held));
+    assert_eq!(
+        admin
+            .call(
+                &fixture,
+                Method::POST,
+                "/api/admin/reports/dismiss",
+                Some(payload.clone())
+            )
+            .await
+            .1,
+        result
+    );
+    assert_eq!(
+        admin
+            .call(&fixture, Method::POST, "/api/admin/bans", Some(payload))
+            .await
+            .0,
+        StatusCode::CONFLICT
+    );
+
+    // Ban: every visible stroke of that author is hidden, reports settled, creates refused.
+    let (status, result, _) = admin
+        .call(
+            &fixture,
+            Method::POST,
+            "/api/admin/bans",
+            Some(hide(Uuid::new_v4(), vec![reported], "spam")),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{result}");
+    assert_eq!(result["banned_authors"], 1);
+    let mut hidden = vec![held, reported];
+    hidden.sort_unstable();
+    assert_eq!(result["hidden"], json!(hidden));
+    for _ in 0..2 {
+        assert_eq!(ws_receive(&mut visitor).await["type"], "stroke.deleted");
+    }
+    let visible: Vec<Uuid> = sqlx::query_scalar("SELECT id FROM strokes WHERE deleted_at IS NULL")
+        .fetch_all(&pool)
+        .await
+        .unwrap();
+    assert_eq!(visible, vec![unrelated]);
+    assert_eq!(
+        admin
+            .call(&fixture, Method::GET, "/api/admin/reports", None)
+            .await
+            .1["open_reports"],
+        0
+    );
+    ws_send(&mut author, json!({"type":"stroke.create","request_id":"after-ban","stroke":{"id":Uuid::new_v4(),"points":[[0,0]],"brush":"round","width":6,"color":"#202020","opacity":1}})).await;
+    loop {
+        let message = ws_receive(&mut author).await;
+        if message["type"] == "error" {
+            assert_eq!(message["code"], "banned");
+            break;
+        }
+    }
+}

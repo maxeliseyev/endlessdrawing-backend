@@ -9,6 +9,7 @@ mod error;
 mod moderation;
 pub mod provision;
 mod rate;
+mod reports;
 mod totp;
 
 pub use config::AdminConfig;
@@ -138,3 +139,4 @@ pub fn router(service: Option<AdminService>, static_dir: Option<PathBuf>) -> Rou
 
 pub(crate) use auth::SessionProof;
 pub(crate) use moderation::{HideResult, ValidatedHide, execute_hide};
+pub(crate) use reports::{BanResult, Decision, DismissResult, execute_ban, execute_dismiss};

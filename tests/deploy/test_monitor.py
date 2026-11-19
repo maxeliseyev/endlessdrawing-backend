@@ -177,4 +177,31 @@ class MonitorTests(unittest.TestCase):
         self.assertFalse((self.root/'never-written').exists())
 
 
+    def test_report_notices_new_batches_overdue_reminders_and_quiet_runs(self):
+        summary=lambda latest,open_,age=0,held=0,reasons=None: {'open_reports':open_,'held':held,'latest_report_seq':latest,
+            'oldest_open_age_s':age,'open_by_reason':reasons if reasons is not None else ({'spam':open_} if open_ else {})}
+        # First run with nothing open only records the position.
+        text,state=monitor.report_notice({},summary(4,0),NOW)
+        self.assertIsNone(text); self.assertEqual(state['latest_report_seq'],4)
+        text,state=monitor.report_notice(state,summary(6,2,held=1,reasons={'hate':1,'spam':1}),NOW)
+        self.assertIn('новых жалоб — 2',text); self.assertIn('ненависть/травля 1',text)
+        self.assertIn('порогом до решения: 1',text); self.assertTrue(text.endswith('https://endlessdrawing.com/admin/'))
+        self.assertNotRegex(text,r'[0-9a-f]{8}-[0-9a-f]{4}')  # never ids
+        self.assertEqual(monitor.report_notice(state,summary(6,2),NOW)[0],None)
+        # A report open >20 h reminds once per 6 hours.
+        text,state=monitor.report_notice(state,summary(6,1,age=21*3600),NOW)
+        self.assertIn('больше 20 часов',text)
+        self.assertIsNone(monitor.report_notice(state,summary(6,1,age=22*3600),NOW+timedelta(hours=2))[0])
+        self.assertIsNotNone(monitor.report_notice(state,summary(6,1,age=27*3600),NOW+timedelta(hours=6))[0])
+
+    def test_moderation_summary_rejects_unexpected_shapes(self):
+        good={'open_reports':1,'held':0,'latest_report_seq':3,'oldest_open_age_s':5,'open_by_reason':{'spam':1}}
+        for body in [good,{**good,'held':-1},{**good,'open_by_reason':{'drop table':1}},['x']]:
+            reply=io.BytesIO(json.dumps(body).encode())
+            with patch.object(monitor.urllib.request,'urlopen',return_value=contextlib.nullcontext(reply)):
+                if body is good: self.assertEqual(monitor.moderation_summary(),good)
+                else:
+                    with self.assertRaises(ValueError): monitor.moderation_summary()
+
+
 if __name__=='__main__': unittest.main()
