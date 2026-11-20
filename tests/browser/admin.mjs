@@ -104,6 +104,13 @@ try {
   const pageErrors = [];
   admin.on('pageerror', (error) => pageErrors.push(error.name));
   const cdp = await adminContext.newCDPSession(admin);
+  let negotiatedWorldProtocol;
+  // Record only the selected public subprotocol, never cookie or authentication headers.
+  cdp.on('Network.webSocketHandshakeResponseReceived', ({ response }) => {
+    const protocol = Object.entries(response.headers).find(([name]) => name.toLowerCase() === 'sec-websocket-protocol')?.[1];
+    if (typeof protocol === 'string' && /^endless-drawing\.msgpack\.v[4-6]$/.test(protocol)) negotiatedWorldProtocol = protocol;
+  });
+  await cdp.send('Network.enable');
   await cdp.send('WebAuthn.enable');
   const add = () => cdp.send('WebAuthn.addVirtualAuthenticator', { options: {
     protocol: 'ctap2', transport: 'internal', hasResidentKey: true, hasUserVerification: true,
@@ -147,8 +154,16 @@ try {
     .toEqual({ httpOnly: true, secure: true, sameSite: 'Strict', path: '/' });
   expect(await admin.evaluate(() => document.cookie.includes('__Host-ed-admin'))).toBe(false);
   expect(await admin.evaluate(() => ({ ...localStorage, ...sessionStorage }))).toEqual({});
-  step = 'read-only manifest v3 refresh reuses geometry on real HTTPS';
-  expect(worldFrames.find((m) => m.type === 'hello.ack')?.protocol_version).toBe(4);
+  const worldVersion = worldFrames.find((m) => m.type === 'hello.ack')?.protocol_version;
+  step = `read-only manifest refresh reuses geometry on real HTTPS (WS v${Number.isInteger(worldVersion) ? worldVersion : 'missing'})`;
+  // v5/v6 retain v4 visible-first and v3 manifest semantics; the frontend chooses its newest supported profile.
+  expect([4, 5, 6]).toContain(worldVersion);
+  expect(negotiatedWorldProtocol).toBe(`endless-drawing.msgpack.v${worldVersion}`);
+  const initialStrokes = worldFrames.filter((m) => m.type === 'viewport.snapshot.chunk').flatMap((m) => m.strokes);
+  const initialStroke = initialStrokes.find((stroke) => stroke.id === id);
+  expect(initialStroke).toBeDefined();
+  expect(initialStroke[worldVersion === 6 ? 'path' : 'points']).toEqual(worldVersion === 6 ? [0, 0, 480, 0] : [[0, 0], [30, 0]]);
+  expect(initialStroke).not.toHaveProperty(worldVersion === 6 ? 'points' : 'path');
   const refresh = async () => {
     const from = worldFrames.length;
     await admin.getByRole('button', { name: 'Reload area', exact: true }).click();
@@ -219,7 +234,7 @@ try {
   await admin.getByRole('button', { name: 'Sign out', exact: true }).click();
   await expect(admin.getByRole('heading', { name: 'Administrator sign in' })).toBeVisible();
   expect(pageErrors).toEqual([]);
-  console.log('PASS: real HTTPS frontend/backend UV and TOTP backup login, encrypted setup, cookies, WS, audited hide, snapshots and logout.');
+  console.log(`PASS: real HTTPS frontend/backend UV and TOTP backup login, encrypted setup, cookies, WS v${worldVersion}, audited hide, snapshots and logout.`);
 } catch (error) {
   // Never dump form inputs, request bodies, cookies or CDP private credentials.
   const notice = admin ? await admin.locator('.notice').textContent().catch(() => '') : '';

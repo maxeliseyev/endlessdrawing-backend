@@ -55,6 +55,12 @@ DATABASE_URL=postgres://canvas:canvas_dev_only@127.0.0.1:55432/canvas \
 
 `tests/admin_browser.rs` создаёт отдельную sqlx test DB и эфемерный account/grant. `tests/browser/admin.mjs` генерирует однодневный self-signed localhost TLS certificate, запускает только loopback proxy и CDP authenticator. Только этот тестовый browser context игнорирует недоверенный тестовый TLS certificate; production Origin, cookies и WebAuthn проверки не ослабляются. Fixture password/token передаются дочернему процессу через stdin, не argv/URL/логи; приватные виртуальные credentials живут только в памяти теста. Успех не означает настоящий Touch ID, доверенный production TLS или независимость реальных резервных провайдеров.
 
+## Совместимость browser gate с WS v4/v5/v6
+
+20.11.2026 исправлено устаревшее ожидание `hello.ack.protocol_version === 4` в `tests/browser/admin.mjs`: оно останавливало deploy со свежим v5 frontend ещё до проверки manifest refresh. Gate принимает v4/v5/v6, сверяет версию hello с фактически согласованным WebSocket subprotocol через CDP и проверяет начальный штрих (`points` для v4/v5, `path` для v6, без второго поля). Проверки warm manifest без повторной геометрии и отсутствия воскрешения после hide сохранены.
+
+Локально полный real HTTPS gate и следующий public browser gate (`smoke_public.py`, Chromium/Firefox/WebKit) прошли с frontend `1d082bb` (v5) и рабочей v6-сборкой из `feat/ws-v6-compact`; feature-specific и all-targets/all-features clippy с `-D warnings`, форматирование, обычные cargo tests и deployment unit tests также проходят. Это локальная проверка, не новая публикация production и не physical Touch ID acceptance.
+
 ## Deployment gate
 
 Manual Actions `Deploy staging` до image build/SSH выполняет admin test и real public UI test с зафиксированным `frontend_ref`, PostgreSQL 17 и Chromium/Firefox/WebKit. Теперь требуется frontend с `test:integration` и public WS (5cc6de7 либо reviewed successor). Затем собирает linux/amd64 образ, делает container smoke и штатный backup/readiness deploy. Release manifest и image labels фиксируют оба SHA. Автоматического публичного deploy с push main нет.
