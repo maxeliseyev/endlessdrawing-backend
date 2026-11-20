@@ -16,6 +16,7 @@ use crate::{
         AdminError, BanResult, Decision, DismissResult, HideResult, SessionProof, ValidatedHide,
         execute_ban, execute_dismiss, execute_hide,
     },
+    codec::Profile,
     config::{ConfigError, RealtimeSettings},
     domain::{Bounds, StrokeLimits, ValidatedStroke},
     protocol::{AckResult, ErrorCode, ReportReason},
@@ -290,9 +291,9 @@ async fn run_writer(
                     if changed {
                         let _ = events.send(Arc::new(Event::Created(record.clone())));
                     }
-                    // The connection adds the v5 author tag (its own) before sending.
+                    // Profile-neutral here; the connection shapes it (v5 tag, v6 path).
                     AckResult::Create {
-                        stroke: record.public(&owner, false),
+                        stroke: record.public(&owner, Profile::MessagePack),
                     }
                 });
                 let _ = reply.send(result.map_err(public_error));

@@ -4,7 +4,7 @@
 
 ## Negotiation
 
-Preferred subprotocol: `endless-drawing.msgpack.v5`; `hello.ack.protocol_version` is 5. Clients offer v5, v4, v3, v2, explicit JSON v1 in that order. Selection requires all v4 gates plus `WS_SAFETY_ENABLED` (default true); disabling it selects v4 for new connections. The new field and message below are invalid in every other profile.
+Preferred subprotocol: `endless-drawing.msgpack.v5`; `hello.ack.protocol_version` is 5. Clients offer v5, v4, v3, v2, explicit JSON v1 in that order. Selection requires all v4 gates plus `WS_SAFETY_ENABLED` (default true); disabling it selects v4 for new connections. The new field and message below are invalid in v1–v4; [v6](protocol-v6-compact.md) keeps both.
 
 ## Author tag
 
