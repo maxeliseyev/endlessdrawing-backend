@@ -5,6 +5,7 @@ use sqlx::{FromRow, PgConnection, types::Json};
 use uuid::Uuid;
 
 use crate::{
+    codec::Profile,
     domain::{Bounds, Brush, StrokeInput, ValidatedStroke},
     protocol::{ErrorCode, PublicStroke, ReportReason},
     session::OwnerDigest,
@@ -42,13 +43,15 @@ pub(crate) struct StoredStroke {
 }
 
 impl StoredStroke {
-    /// The stroke as `owner` sees it; `tagged` (v5) adds the per-viewer author tag.
-    pub fn public(&self, owner: &OwnerDigest, tagged: bool) -> PublicStroke {
+    /// The stroke as `owner` sees it in `profile`: v5+ adds the per-viewer author
+    /// tag, v6 sends quantized `path` geometry.
+    pub fn public(&self, owner: &OwnerDigest, profile: Profile) -> PublicStroke {
         PublicStroke {
             input: self.input.clone(),
             seq: self.seq,
             own: self.is_owned_by(owner),
-            author: tagged.then(|| owner.author_tag(&self.owner)),
+            author: profile.safety().then(|| owner.author_tag(&self.owner)),
+            compact: profile.compact(),
         }
     }
 
@@ -350,7 +353,7 @@ pub(crate) async fn manifest_partition_page(
     pass: crate::snapshot::Pass,
 ) -> Result<Vec<ManifestEntry>, sqlx::Error> {
     let mut query = String::from(
-        "SELECT id, seq, jsonb_array_length(points) AS point_count FROM strokes WHERE deleted_at IS NULL AND bounds && box(point($1,$2),point($3,$4)) AND seq > $5",
+        "SELECT id, seq, point_count FROM strokes WHERE deleted_at IS NULL AND bounds && box(point($1,$2),point($3,$4)) AND seq > $5",
     );
     if pass.filter().is_some() {
         query.push_str(" AND (bounds && box(point($7,$8),point($9,$10))) = $11");

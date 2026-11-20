@@ -207,7 +207,7 @@ async fn stream(
                 context.profile,
                 ordered
                     .into_iter()
-                    .map(|record| record.public(&context.owner, context.profile.safety())),
+                    .map(|record| record.public(&context.owner, context.profile)),
             )
             .await?;
         }

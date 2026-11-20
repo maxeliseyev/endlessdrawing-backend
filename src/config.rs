@@ -153,6 +153,7 @@ impl RealtimeSettings {
             manifest_enabled: setting(lookup, "WS_MANIFEST_ENABLED", "true")?,
             priority_enabled: setting(lookup, "WS_PRIORITY_ENABLED", "true")?,
             safety_enabled: setting(lookup, "WS_SAFETY_ENABLED", "true")?,
+            compact_enabled: setting(lookup, "WS_COMPACT_ENABLED", "true")?,
             reports_per_hour: positive(lookup, "REPORTS_PER_HOUR", 10)?,
             report_hold_threshold: positive(lookup, "REPORT_HOLD_THRESHOLD", 5)?,
             ..Self::default()

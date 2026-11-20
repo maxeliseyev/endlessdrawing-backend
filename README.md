@@ -2,7 +2,7 @@
 
 Backend общего бесконечного холста на **Rust + Axum + Tokio + SQLx + PostgreSQL**.
 
-Требования: [backend](docs/backend.md), [JSON-протокол v1](docs/protocol.md), [MessagePack v2](docs/protocol-v2-msgpack.md), [manifest v3](docs/protocol-v3-manifest.md), [visible-first v4](docs/protocol-v4-priority.md), [frontend](docs/frontend.md).
+Требования: [backend](docs/backend.md), [JSON-протокол v1](docs/protocol.md), [MessagePack v2](docs/protocol-v2-msgpack.md), [manifest v3](docs/protocol-v3-manifest.md), [visible-first v4](docs/protocol-v4-priority.md), [safety v5](docs/protocol-v5-safety.md), [compact paths v6](docs/protocol-v6-compact.md), [frontend](docs/frontend.md).
 
 Эксплуатация: [GitHub Actions → закрытый VPS-стенд](docs/deployment.md), [зашифрованные внешние бэкапы](docs/backups.md), [Telegram monitoring](docs/monitoring.md), [least-privilege DB roles](docs/database-roles.md), [закрытый HTTPS/Caddy](docs/https.md), [gates публичного запуска](docs/publication.md). Модерация: [Admin API](docs/admin-api.md), [закрытый provisioning / Touch ID](docs/admin-operations.md), [совместная интеграция frontend/backend](docs/admin-integration.md).
 
@@ -114,6 +114,8 @@ M2: [manifest protocol v3](docs/protocol-v3-manifest.md). Новая пара к
 | Переменная | По умолчанию |
 | --- | --- |
 | `ALLOWED_ORIGINS` | `http://localhost:5173,http://127.0.0.1:5173,http://localhost:3000,http://127.0.0.1:3000` |
+| `WS_COMPACT_ENABLED` | `true`; `false` отключает v6, сохраняя v5 |
+| `WS_SAFETY_ENABLED` | `true`; `false` отключает v6/v5, сохраняя v4 |
 | `WS_PRIORITY_ENABLED` | `true`; `false` отключает v4, сохраняя manifest v3 |
 | `WS_MANIFEST_ENABLED` | `true`; `false` отключает v4/v3, сохраняя MessagePack v2 |
 | `WS_MSGPACK_ENABLED` | `true`; `false` выключает выбор v2, сохраняя JSON |

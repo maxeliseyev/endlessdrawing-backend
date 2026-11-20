@@ -1,6 +1,6 @@
 //! JSON v1 messages. No client message or internal owner record is Debug-logged.
 
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Serialize, Serializer, ser::SerializeMap};
 use uuid::Uuid;
 
 use crate::domain::{Bounds, StrokeInput, WORLD_LIMIT};
@@ -114,15 +114,62 @@ impl ViewportInput {
     }
 }
 
-#[derive(Clone, Serialize)]
+#[derive(Clone)]
 pub(crate) struct PublicStroke {
-    #[serde(flatten)]
     pub input: StrokeInput,
     pub seq: i64,
     pub own: bool,
-    /// v5 only: per-viewer author tag (docs/protocol-v5-safety.md).
-    #[serde(skip_serializing_if = "Option::is_none")]
+    /// v5+: per-viewer author tag (docs/protocol-v5-safety.md).
     pub author: Option<String>,
+    /// v6: geometry goes out as `path` instead of `points` (docs/protocol-v6-compact.md).
+    pub compact: bool,
+}
+
+/// v6 path quantum: coordinates are integers in 1/16 world unit, a quarter of a
+/// CSS pixel at the clients' maximum zoom (4).
+pub(crate) const PATH_SCALE: f64 = 16.0;
+
+/// `[x0, y0, dx1, dy1, …]`: the first point absolute, then deltas, all in 1/16 world
+/// unit. Deltas are taken between rounded points, so decoding has no drift. Every
+/// value is within ±(WORLD_LIMIT·16·2), far inside the protocol's safe-integer range.
+pub(crate) fn path(points: &[[f64; 2]]) -> Vec<i64> {
+    let mut path = Vec::with_capacity(points.len() * 2);
+    let (mut previous_x, mut previous_y) = (0, 0);
+    for &[x, y] in points {
+        // Validated points are finite and within WORLD_LIMIT, so the casts are exact.
+        let (x, y) = (
+            (x * PATH_SCALE).round() as i64,
+            (y * PATH_SCALE).round() as i64,
+        );
+        path.push(x - previous_x);
+        path.push(y - previous_y);
+        (previous_x, previous_y) = (x, y);
+    }
+    path
+}
+
+impl Serialize for PublicStroke {
+    // Field order and names match the derived v1–v5 object; only `points` becomes `path` in v6.
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        let input = &self.input;
+        let mut map = serializer.serialize_map(Some(8 + usize::from(self.author.is_some())))?;
+        map.serialize_entry("id", &input.id)?;
+        if self.compact {
+            map.serialize_entry("path", &path(&input.points))?;
+        } else {
+            map.serialize_entry("points", &input.points)?;
+        }
+        map.serialize_entry("brush", &input.brush)?;
+        map.serialize_entry("width", &input.width)?;
+        map.serialize_entry("color", &input.color)?;
+        map.serialize_entry("opacity", &input.opacity)?;
+        map.serialize_entry("seq", &self.seq)?;
+        map.serialize_entry("own", &self.own)?;
+        if let Some(author) = &self.author {
+            map.serialize_entry("author", author)?;
+        }
+        map.end()
+    }
 }
 
 #[derive(Serialize)]
@@ -324,6 +371,62 @@ mod tests {
         ] {
             assert_eq!(invalid.validate(20.0), Err(ErrorCode::ValidationFailed));
         }
+    }
+
+    fn public(compact: bool, points: Vec<[f64; 2]>) -> PublicStroke {
+        PublicStroke {
+            input: StrokeInput {
+                id: Uuid::nil(),
+                points,
+                brush: crate::domain::Brush::Round,
+                width: 4.0,
+                color: "#123456".into(),
+                opacity: 1.0,
+            },
+            seq: 7,
+            own: false,
+            author: None,
+            compact,
+        }
+    }
+
+    #[test]
+    fn path_is_absolute_then_deltas_in_sixteenths_without_drift() {
+        let points = vec![[10.0, -2.5], [10.03, -2.47], [10.06, -2.44], [-1e9, 1e9]];
+        let encoded = path(&points);
+        assert_eq!(&encoded[..6], &[160, -40, 0, 0, 1, 1]);
+        let (mut x, mut y) = (0i64, 0i64);
+        for (pair, original) in encoded.chunks(2).zip(&points) {
+            (x, y) = (x + pair[0], y + pair[1]);
+            let decoded = [x as f64 / PATH_SCALE, y as f64 / PATH_SCALE];
+            assert!((decoded[0] - original[0]).abs() <= 0.5 / PATH_SCALE);
+            assert!((decoded[1] - original[1]).abs() <= 0.5 / PATH_SCALE);
+        }
+        assert_eq!((x, y), (-16_000_000_000, 16_000_000_000));
+        assert!(
+            encoded
+                .iter()
+                .all(|value| value.unsigned_abs() <= 9_007_199_254_740_991)
+        );
+    }
+
+    #[test]
+    fn v6_strokes_replace_points_with_path_and_keep_every_other_field() {
+        let points = vec![[0.0, 0.0], [1.0, 0.5]];
+        let full = serde_json::to_value(public(false, points.clone())).unwrap();
+        let compact = serde_json::to_value(public(true, points)).unwrap();
+        assert_eq!(full["points"], serde_json::json!([[0.0, 0.0], [1.0, 0.5]]));
+        assert_eq!(compact["path"], serde_json::json!([0, 0, 16, 8]));
+        assert!(compact.get("points").is_none() && full.get("path").is_none());
+        let (mut full, mut compact) = (full, compact);
+        full.as_object_mut().unwrap().remove("points");
+        compact.as_object_mut().unwrap().remove("path");
+        assert_eq!(full, compact);
+        assert_eq!(
+            full,
+            serde_json::json!({"id": Uuid::nil(), "brush": "round", "width": 4.0,
+                "color": "#123456", "opacity": 1.0, "seq": 7, "own": false})
+        );
     }
 
     #[test]

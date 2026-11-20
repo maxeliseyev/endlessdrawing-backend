@@ -15,6 +15,8 @@ pub struct RealtimeSettings {
     pub priority_enabled: bool,
     /// Allow v5 (author tags, reports) when v4 is enabled.
     pub safety_enabled: bool,
+    /// Allow v6 (quantized integer stroke paths) when v5 is enabled.
+    pub compact_enabled: bool,
     /// v5 reports per rolling hour per session (persisted).
     pub reports_per_hour: usize,
     /// Distinct open reporters that hold a stroke pending moderation.
@@ -56,6 +58,7 @@ impl Default for RealtimeSettings {
             manifest_enabled: true,
             priority_enabled: true,
             safety_enabled: true,
+            compact_enabled: true,
             reports_per_hour: 10,
             report_hold_threshold: 5,
             max_message_bytes: 128 * 1024,

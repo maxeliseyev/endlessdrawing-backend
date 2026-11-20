@@ -684,3 +684,5 @@ include!("support/manifest.rs");
 include!("support/priority.rs");
 
 include!("support/safety.rs");
+
+include!("support/compact.rs");

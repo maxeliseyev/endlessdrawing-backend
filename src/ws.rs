@@ -25,8 +25,8 @@ use uuid::Uuid;
 
 use crate::{
     codec::{
-        CLIENT_BYTES, JSON_PROTOCOL, MANIFEST_PROTOCOL, MSGPACK_PROTOCOL, PRIORITY_PROTOCOL,
-        Profile, SAFETY_PROTOCOL,
+        CLIENT_BYTES, COMPACT_PROTOCOL, JSON_PROTOCOL, MANIFEST_PROTOCOL, MSGPACK_PROTOCOL,
+        PRIORITY_PROTOCOL, Profile, SAFETY_PROTOCOL,
     },
     domain::Bounds,
     protocol::{
@@ -75,7 +75,11 @@ async fn upgrade(
     let v4 = service.settings.msgpack_enabled
         && service.settings.manifest_enabled
         && service.settings.priority_enabled;
-    let selected = if v4 && service.settings.safety_enabled && offered.contains(&SAFETY_PROTOCOL) {
+    let v5 = v4 && service.settings.safety_enabled;
+    let selected = if v5 && service.settings.compact_enabled && offered.contains(&COMPACT_PROTOCOL)
+    {
+        Some(COMPACT_PROTOCOL)
+    } else if v5 && offered.contains(&SAFETY_PROTOCOL) {
         Some(SAFETY_PROTOCOL)
     } else if v4 && offered.contains(&PRIORITY_PROTOCOL) {
         Some(PRIORITY_PROTOCOL)
@@ -93,7 +97,9 @@ async fn upgrade(
     } else {
         None
     };
-    let profile = if selected == Some(SAFETY_PROTOCOL) {
+    let profile = if selected == Some(COMPACT_PROTOCOL) {
+        Profile::Compact
+    } else if selected == Some(SAFETY_PROTOCOL) {
         Profile::Safety
     } else if selected == Some(PRIORITY_PROTOCOL) {
         Profile::Priority
@@ -352,7 +358,7 @@ async fn connection(
                         subscription.as_ref().and_then(|current| {
                             if !intersects(current.bounds, event.bounds()?) { return None; }
                             Some(match event.as_ref() {
-                                Event::Created(stroke) => ServerMessage::Created { subscription_id: current.id.clone(), stroke: stroke.public(&owner, profile.safety()) },
+                                Event::Created(stroke) => ServerMessage::Created { subscription_id: current.id.clone(), stroke: stroke.public(&owner, profile) },
                                 Event::Deleted { id, seq, .. } => ServerMessage::Deleted { subscription_id: current.id.clone(), stroke_id: *id, seq: *seq },
                                 Event::Reset => return None,
                             })
@@ -556,8 +562,11 @@ async fn command(
             };
             Some(match result {
                 Ok(mut result) => {
-                    if let (true, AckResult::Create { stroke }) = (profile.safety(), &mut result) {
-                        stroke.author = Some(owner.author_tag(owner.as_bytes()));
+                    if let AckResult::Create { stroke } = &mut result {
+                        if profile.safety() {
+                            stroke.author = Some(owner.author_tag(owner.as_bytes()));
+                        }
+                        stroke.compact = profile.compact();
                     }
                     ServerMessage::Ack { request_id, result }
                 }

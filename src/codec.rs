@@ -6,6 +6,7 @@ use axum::extract::ws::Message;
 use serde::Serialize;
 use serde_json::Value;
 
+pub(crate) const COMPACT_PROTOCOL: &str = "endless-drawing.msgpack.v6";
 pub(crate) const SAFETY_PROTOCOL: &str = "endless-drawing.msgpack.v5";
 pub(crate) const PRIORITY_PROTOCOL: &str = "endless-drawing.msgpack.v4";
 pub(crate) const MANIFEST_PROTOCOL: &str = "endless-drawing.msgpack.v3";
@@ -13,6 +14,9 @@ pub(crate) const MSGPACK_PROTOCOL: &str = "endless-drawing.msgpack.v2";
 pub(crate) const JSON_PROTOCOL: &str = "endless-drawing.json.v1";
 pub(crate) const CLIENT_BYTES: usize = 128 * 1024;
 pub(crate) const SERVER_BYTES: usize = 256 * 1024;
+/// Client arrays hold at most one stroke's points; a v6 server `path` holds two integers per point.
+const CLIENT_ARRAY: usize = 2000;
+const SERVER_ARRAY: usize = 4000;
 const SAFE_INTEGER: u64 = 9_007_199_254_740_991;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -23,6 +27,8 @@ pub(crate) enum Profile {
     Priority,
     /// v4 plus author tags and `stroke.report` (docs/protocol-v5-safety.md).
     Safety,
+    /// v5 with quantized integer stroke paths (docs/protocol-v6-compact.md).
+    Compact,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -49,17 +55,25 @@ impl Profile {
 
     /// v3+: cached subscriptions, manifest and fetch.
     pub fn manifest(self) -> bool {
-        matches!(self, Self::Manifest | Self::Priority | Self::Safety)
+        matches!(
+            self,
+            Self::Manifest | Self::Priority | Self::Safety | Self::Compact
+        )
     }
 
     /// v4+: `visible_bounds` is required in subscriptions.
     pub fn visible_first(self) -> bool {
-        matches!(self, Self::Priority | Self::Safety)
+        matches!(self, Self::Priority | Self::Safety | Self::Compact)
     }
 
-    /// v5: author tags on strokes and `stroke.report`.
+    /// v5+: author tags on strokes and `stroke.report`.
     pub fn safety(self) -> bool {
-        self == Self::Safety
+        matches!(self, Self::Safety | Self::Compact)
+    }
+
+    /// v6: public strokes carry `path` (quantized integers) instead of `points`.
+    pub fn compact(self) -> bool {
+        self == Self::Compact
     }
 
     pub fn version(self) -> u8 {
@@ -69,6 +83,7 @@ impl Profile {
             Self::Manifest => 3,
             Self::Priority => 4,
             Self::Safety => 5,
+            Self::Compact => 6,
         }
     }
 
@@ -85,7 +100,7 @@ impl Profile {
                     .with_human_readable(),
             )
             .map_err(|_| ())?;
-        validate(&bytes, SERVER_BYTES).map_err(|_| ())?;
+        validate(&bytes, SERVER_BYTES, SERVER_ARRAY).map_err(|_| ())?;
         Ok(bytes)
     }
 
@@ -93,7 +108,7 @@ impl Profile {
         let bytes = self.encode(value)?;
         Ok(match self {
             Self::Json => Message::Text(String::from_utf8(bytes).map_err(|_| ())?.into()),
-            Self::MessagePack | Self::Manifest | Self::Priority | Self::Safety => {
+            Self::MessagePack | Self::Manifest | Self::Priority | Self::Safety | Self::Compact => {
                 Message::Binary(bytes.into())
             }
         })
@@ -105,10 +120,10 @@ impl Profile {
                 serde_json::from_str(&text).map_err(|_| DecodeError::Invalid)
             }
             (
-                Self::MessagePack | Self::Manifest | Self::Priority | Self::Safety,
+                Self::MessagePack | Self::Manifest | Self::Priority | Self::Safety | Self::Compact,
                 Message::Binary(bytes),
             ) => {
-                validate(&bytes, CLIENT_BYTES)?;
+                validate(&bytes, CLIENT_BYTES, CLIENT_ARRAY)?;
                 rmp_serde::from_slice(&bytes).map_err(|_| DecodeError::Invalid)
             }
             _ => Err(DecodeError::WrongType),
@@ -117,7 +132,7 @@ impl Profile {
 }
 
 /// Check all headers, nesting, keys and int64 range before a general decoder.
-fn validate(bytes: &[u8], limit: usize) -> Result<(), DecodeError> {
+fn validate(bytes: &[u8], limit: usize, max_array: usize) -> Result<(), DecodeError> {
     if bytes.len() > limit {
         return Err(DecodeError::Oversize);
     }
@@ -131,6 +146,7 @@ fn validate(bytes: &[u8], limit: usize) -> Result<(), DecodeError> {
         bytes,
         offset: 0,
         nodes: 0,
+        max_array,
     };
     scanner.read(0, false)?;
     if scanner.offset != bytes.len() {
@@ -143,6 +159,7 @@ struct Scanner<'a> {
     bytes: &'a [u8],
     offset: usize,
     nodes: usize,
+    max_array: usize,
 }
 
 impl<'a> Scanner<'a> {
@@ -239,7 +256,7 @@ impl<'a> Scanner<'a> {
             0xdc | 0xde => self.length(2)?,
             _ => self.length(4)?,
         };
-        if count > if map { 16 } else { 2000 }
+        if count > if map { 16 } else { self.max_array }
             || count * if map { 2 } else { 1 } > self.bytes.len() - self.offset
         {
             return Err(DecodeError::Invalid);
@@ -266,7 +283,7 @@ mod tests {
 
     fn directory() -> std::path::PathBuf {
         let version = std::env::var("WS_FIXTURES_VERSION").unwrap_or_else(|_| "ws-v2".into());
-        assert!(["ws-v2", "ws-v3", "ws-v4"].contains(&version.as_str()));
+        assert!(["ws-v2", "ws-v3", "ws-v4", "ws-v6"].contains(&version.as_str()));
         std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("tests/fixtures")
             .join(version)
@@ -274,7 +291,7 @@ mod tests {
 
     #[test]
     fn reads_typescript_and_rust_fixture_corpus() {
-        for version in ["ws-v2", "ws-v3", "ws-v4"] {
+        for version in ["ws-v2", "ws-v3", "ws-v4", "ws-v6"] {
             let directory = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
                 .join("tests/fixtures")
                 .join(version);
@@ -344,10 +361,13 @@ mod tests {
             &[0x81, 0xa1, b'a', 0xc4, 0],
         ];
         for bytes in inputs {
-            assert_eq!(validate(bytes, CLIENT_BYTES), Err(DecodeError::Invalid));
+            assert_eq!(
+                validate(bytes, CLIENT_BYTES, CLIENT_ARRAY),
+                Err(DecodeError::Invalid)
+            );
         }
         assert_eq!(
-            validate(&vec![0; CLIENT_BYTES + 1], CLIENT_BYTES),
+            validate(&vec![0; CLIENT_BYTES + 1], CLIENT_BYTES, CLIENT_ARRAY),
             Err(DecodeError::Oversize)
         );
         assert_eq!(
@@ -358,7 +378,7 @@ mod tests {
             .encode(&serde_json::json!({"point": [999_999_999.125, -999_999_999.062_5]}))
             .unwrap();
         for end in 0..bytes.len() {
-            assert!(validate(&bytes[..end], CLIENT_BYTES).is_err());
+            assert!(validate(&bytes[..end], CLIENT_BYTES, CLIENT_ARRAY).is_err());
         }
         let mut nested = serde_json::json!(1);
         for _ in 0..9 {
@@ -368,6 +388,52 @@ mod tests {
             Profile::MessagePack
                 .encode(&serde_json::json!({"nested":nested}))
                 .is_err()
+        );
+    }
+
+    #[test]
+    fn v6_server_paths_may_hold_two_integers_per_point_but_client_arrays_may_not() {
+        use crate::protocol::PublicStroke;
+        let points: Vec<[f64; 2]> = (0..2000)
+            .map(|i| [f64::from(i) * 3.7 - 1e9, 1e9 - f64::from(i) * 2.9])
+            .collect();
+        let stroke = PublicStroke {
+            input: crate::domain::StrokeInput {
+                id: Uuid::nil(),
+                points,
+                brush: crate::domain::Brush::Round,
+                width: 64.0,
+                color: "#123456".into(),
+                opacity: 1.0,
+            },
+            seq: 1,
+            own: false,
+            author: Some("A".repeat(22)),
+            compact: true,
+        };
+        let message = ServerMessage::Created {
+            subscription_id: "view".into(),
+            stroke,
+        };
+        let bytes = Profile::Compact.encode(&message).unwrap();
+        assert!(bytes.len() < SERVER_BYTES);
+        let full = ServerMessage::Created {
+            subscription_id: "view".into(),
+            stroke: match message {
+                ServerMessage::Created { mut stroke, .. } => {
+                    stroke.compact = false;
+                    stroke
+                }
+                _ => unreachable!(),
+            },
+        };
+        assert!(Profile::Safety.encode(&full).unwrap().len() > bytes.len());
+        let client = Profile::MessagePack
+            .encode(&serde_json::json!({"values": vec![0; CLIENT_ARRAY + 1]}))
+            .unwrap();
+        assert_eq!(
+            Profile::Compact.decode(Message::Binary(client.into())),
+            Err(DecodeError::Invalid)
         );
     }
 
